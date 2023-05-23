@@ -33,6 +33,7 @@ class FSCTrainer(Trainer):
         args = self.args
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
+            torch.set_float32_matmul_precision('high')
         else:
             raise Exception("gpu is not available")
 
@@ -104,24 +105,7 @@ class FSCTrainer(Trainer):
 
         # Iterate over data.
         for inputs, targets, ex_list in tqdm(self.dataloaders['train']):
-            inputs = inputs.to(self.device)
-            targets = targets.to(self.device) * self.args.log_param
-
-            with torch.set_grad_enabled(True):
-                et_dmaps = self.model(inputs)
-                loss = self.criterion(et_dmaps, targets)
-
-                self.optimizer.zero_grad()
-                loss.backward()
-                self.optimizer.step()
-
-                N = inputs.size(0)
-                pre_count = torch.sum(et_dmaps.view(N, -1), dim=1).detach().cpu().numpy()
-                gd_count = torch.sum(targets.view(N, -1), dim=1).detach().cpu().numpy()
-                res = pre_count - gd_count
-                epoch_loss.update(loss.item(), N)
-                epoch_mse.update(np.mean(res * res), N)
-                epoch_mae.update(np.mean(abs(res)), N)
+            self.train_step(inputs, targets, epoch_loss, epoch_mse, epoch_mae)
 
         logging.info('Epoch {} Train, Loss: {:.2f}, MSE: {:.2f} MAE: {:.2f}, Cost {:.1f} sec'
                      .format(self.epoch, epoch_loss.get_avg(), np.sqrt(epoch_mse.get_avg()), epoch_mae.get_avg(),
@@ -141,6 +125,27 @@ class FSCTrainer(Trainer):
             'best_mae_at': self.best_mae_at,
         }, save_path)
         self.save_list.append(save_path)  # control the number of saved models
+
+    @torch.compile(mode="reduce-overhead")
+    def train_step(self, inputs, targets, epoch_loss, epoch_mse, epoch_mae):
+        inputs = inputs.to(self.device)
+        targets = targets.to(self.device) * self.args.log_param
+
+        with torch.set_grad_enabled(True):
+            et_dmaps = self.model(inputs)
+            loss = self.criterion(et_dmaps, targets)
+
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            N = inputs.size(0)
+            pre_count = torch.sum(et_dmaps.view(N, -1), dim=1).detach().cpu().numpy()
+            gd_count = torch.sum(targets.view(N, -1), dim=1).detach().cpu().numpy()
+            res = pre_count - gd_count
+            epoch_loss.update(loss.item(), N)
+            epoch_mse.update(np.mean(res * res), N)
+            epoch_mae.update(np.mean(abs(res)), N)
 
     def val_epoch(self):
         epoch_start = time.time()
