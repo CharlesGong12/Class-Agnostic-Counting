@@ -9,7 +9,7 @@ from torch import optim
 from torch.utils.data import DataLoader
 
 from datasets.fsc_data import FSCData
-from models.convtrans import VGG16Trans
+from models.convtrans import TransformerEncoderDecoder
 from losses.losses import DownMSELoss
 from utils.trainer import Trainer
 from utils.helper import Save_Handle, AverageMeter
@@ -55,7 +55,7 @@ class FSCTrainer(Trainer):
                                                       num_workers=args.num_workers, pin_memory=True)
         self.dataloaders = {'train': train_dataloaders, 'val': val_dataloaders, 'test': test_dataloaders}
 
-        self.model = VGG16Trans(dcsize=args.dcsize)
+        self.model = TransformerEncoderDecoder(dcsize=args.dcsize)
         self.model.to(self.device)
 
         self.optimizer = optim.Adam(self.model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -90,7 +90,6 @@ class FSCTrainer(Trainer):
     def train(self):
         args = self.args
         self.epoch = None
-        # self.val_epoch()
         for epoch in range(self.start_epoch, args.max_epoch):
             logging.info('-' * 5 + 'Epoch {}/{}'.format(epoch, args.max_epoch - 1) + '-' * 5)
             self.epoch = epoch

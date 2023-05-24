@@ -129,6 +129,25 @@ class FSCData(data.Dataset):
             tmp_ex = img.crop((x1, y1, x2, y2))
             examplars.append(tmp_ex)
 
+        # Resize image to 384*384, perseving the aspect ratio
+        wd, ht = img.size
+        if wd > ht:
+            new_wd = 384
+            new_ht = int(ht * 384 / wd)
+        else:
+            new_ht = 384
+            new_wd = int(wd * 384 / ht)
+        img = img.resize((new_wd, new_ht))
+        # Fill the blank area with 0, centering the image
+        img = np.pad(img, ((0, (384-new_ht)//2), ((384-new_wd)//2, 0), (0, 0)), 'constant', constant_values=0)
+        img = np.pad(img, (((384-new_ht)//2, 0), (0, (384-new_wd)//2), (0, 0)), 'constant', constant_values=0)
+        
+        # If a dimension is odd, pad it with 1 pixel
+        if img.shape[0] % 2 == 1:
+            img = np.pad(img, ((0, 1), (0, 0), (0, 0)), 'constant', constant_values=0)
+        if img.shape[1] % 2 == 1:
+            img = np.pad(img, ((0, 0), (0, 1), (0, 0)), 'constant', constant_values=0)
+
         img = self.trans_img(img)
         count = np.sum(dmap)
         return img, count, [self.trans_img(ex) for ex in examplars], name
