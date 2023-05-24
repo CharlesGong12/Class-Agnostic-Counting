@@ -47,10 +47,13 @@ class FSCTrainer(Trainer):
                                        shuffle=True,
                                        num_workers=args.num_workers,
                                        pin_memory=True)
-        val_datasets = FSCData(args.data_dir, method='test')
-        val_dataloaders = DataLoader(val_datasets, 1, shuffle=False,
+        val_datasets = FSCData(args.data_dir, method='val')
+        val_dataloaders = DataLoader(val_datasets, 1, shuffle=True,
                                                       num_workers=args.num_workers, pin_memory=True)
-        self.dataloaders = {'train': train_dataloaders, 'val': val_dataloaders}
+        test_datasets = FSCData(args.data_dir, method='test')
+        test_dataloaders = DataLoader(test_datasets, 1, shuffle=False,
+                                                      num_workers=args.num_workers, pin_memory=True)
+        self.dataloaders = {'train': train_dataloaders, 'val': val_dataloaders, 'test': test_dataloaders}
 
         self.model = VGG16Trans(dcsize=args.dcsize)
         self.model.to(self.device)
@@ -95,6 +98,7 @@ class FSCTrainer(Trainer):
             self.scheduler.step()
             if epoch >= args.val_start and (epoch % args.val_epoch == 0 or epoch == args.max_epoch - 1):
                 self.val_epoch()
+        self.test()
 
     def train_epoch(self):
         epoch_loss = AverageMeter()
@@ -110,9 +114,10 @@ class FSCTrainer(Trainer):
         logging.info('Epoch {} Train, Loss: {:.2f}, MSE: {:.2f} MAE: {:.2f}, Cost {:.1f} sec'
                      .format(self.epoch, epoch_loss.get_avg(), np.sqrt(epoch_mse.get_avg()), epoch_mae.get_avg(),
                              time.time() - epoch_start))
-        wandb.log({'Train/loss': epoch_loss.get_avg(),
-                   'Train/lr': self.scheduler.get_last_lr()[0],
-                   'Train/epoch_mae': epoch_mae.get_avg()}, step=self.epoch)
+        wandb.log({'Train/Loss': epoch_loss.get_avg(),
+                   'Train/LR': self.scheduler.get_last_lr()[0],
+                   'Train/MAE': epoch_mae.get_avg(),
+                   'Train/MSE': epoch_mse.get_avg()}, step=self.epoch)
 
         model_state_dic = self.model.state_dict()
         save_path = os.path.join(self.save_dir, '{}_ckpt.tar'.format(self.epoch))
@@ -204,19 +209,75 @@ class FSCTrainer(Trainer):
             self.best_mse = mse
             self.best_mae = mae
             self.best_mae_at = self.epoch
-            logging.info("SAVE best mse {:.2f} mae {:.2f} model @epoch {}".format(self.best_mse, self.best_mae, self.epoch))
+            logging.info("SAVE best MSE {:.2f} MAE {:.2f} model @ epoch {}".format(self.best_mse, self.best_mae, self.epoch))
             if self.args.save_all:
                 torch.save(model_state_dic, os.path.join(self.save_dir, 'best_model_{}.pth'.format(self.best_count)))
                 self.best_count += 1
             else:
                 torch.save(model_state_dic, os.path.join(self.save_dir, 'best_model.pth'))
 
-        logging.info("best mae {:.2f} mse {:.2f} @epoch {}".format(self.best_mae, self.best_mse, self.best_mae_at))
+        logging.info("Best MAE {:.2f} MSE {:.2f} @ epoch {}".format(self.best_mae, self.best_mse, self.best_mae_at))
 
         if self.epoch is not None:
-            wandb.log({'Val/bestMAE': self.best_mae,
+            wandb.log({'Val/Best MAE': self.best_mae,
                        'Val/MAE': mae,
                        'Val/MSE': mse,
+                      }, step=self.epoch)
+
+    def test(self):
+        epoch_start = time.time()
+        self.model.eval()
+        epoch_res = []
+
+        for inputs, count, ex_list, name in tqdm(self.dataloaders['test']):
+            inputs = inputs.to(self.device)
+            # inputs are images with different sizes
+            b, c, h, w = inputs.shape
+            h, w = int(h), int(w)
+            assert b == 1, 'the batch size should equal to 1 in test mode'
+
+            max_size = 2000
+            if h > max_size or w > max_size:
+                h_stride = int(ceil(1.0 * h / max_size))
+                w_stride = int(ceil(1.0 * w / max_size))
+                h_step = h // h_stride
+                w_step = w // w_stride
+                input_list = []
+                for i in range(h_stride):
+                    for j in range(w_stride):
+                        h_start = i * h_step
+                        if i != h_stride - 1:
+                            h_end = (i + 1) * h_step
+                        else:
+                            h_end = h
+                        w_start = j * w_step
+                        if j != w_stride - 1:
+                            w_end = (j + 1) * w_step
+                        else:
+                            w_end = w
+                        input_list.append(inputs[:, :, h_start:h_end, w_start:w_end])
+                with torch.set_grad_enabled(False):
+                    pre_count = 0.0
+                    for input_ in input_list:
+                        output = self.model(input_)
+                        pre_count += torch.sum(output) 
+            else:
+                with torch.set_grad_enabled(False):
+                    output = self.model(inputs)
+                    pre_count = torch.sum(output)
+
+            epoch_res.append(count[0].item() - pre_count.item() / self.args.log_param)
+
+        epoch_res = np.array(epoch_res)
+        mse = np.sqrt(np.mean(np.square(epoch_res)))
+        mae = np.mean(np.abs(epoch_res))
+
+        logging.info('Epoch {} Test, MSE: {:.2f} MAE: {:.2f}, Cost {:.1f} sec'
+                     .format(self.epoch, mse, mae, time.time() - epoch_start))
+
+        if self.epoch is not None:
+            wandb.log({'Test/MAE': mae,
+                       'Test/MSE': mse,
                       }, step=self.epoch)
 
 
