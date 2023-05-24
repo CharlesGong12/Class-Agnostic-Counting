@@ -87,7 +87,7 @@ class FSCData(data.Dataset):
 
         # crop examplar
         examplars = []
-        rects = rects.astype(np.int)
+        rects = rects.astype(np.int32)
         for y1, x1, y2, x2 in rects:
             tmp_ex = img.crop((x1, y1, x2, y2))
             examplars.append(tmp_ex)
@@ -124,7 +124,7 @@ class FSCData(data.Dataset):
         img, rects, dmap, points, name = sample
         # crop examplar
         examplars = []
-        rects = rects.astype(np.int)
+        rects = rects.astype(np.int32)
         for y1, x1, y2, x2 in rects:
             tmp_ex = img.crop((x1, y1, x2, y2))
             examplars.append(tmp_ex)
