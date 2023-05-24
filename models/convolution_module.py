@@ -6,7 +6,7 @@ class ConvBlock(nn.Module):
     Normal Conv Block with BN & ReLU
     """
 
-    def __init__(self, cin, cout, k_size=3, d_rate=1, batch_norm=True, res_link=False):
+    def __init__(self, cin, cout, k_size=3, d_rate=1, batch_norm=True, res_link=True):
         super().__init__()
         self.res_link = res_link
         if batch_norm:
