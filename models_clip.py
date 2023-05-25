@@ -3,7 +3,7 @@ from functools import partial
 import torch
 import torch.nn as nn
 from timm.models.vision_transformer import PatchEmbed, Block
-
+import open_clip
 from util.pos_embed import get_2d_sincos_pos_embed
 
 
@@ -11,7 +11,7 @@ class MaskedAutoencoderViTNoCT(nn.Module):
     """ Masked Autoencoder with VisionTransformer backbone
     """
     def __init__(self, img_size=384, patch_size=16, in_chans=3,
-                 embed_dim=1024, depth=24, num_heads=16,
+                 embed_dim=1024,
                  decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
         super().__init__()
@@ -21,12 +21,9 @@ class MaskedAutoencoderViTNoCT(nn.Module):
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim)
         num_patches = self.patch_embed.num_patches
 
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim), requires_grad=False)  # fixed sin-cos embedding
-
-        self.blocks = nn.ModuleList([
-            Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
-            for i in range(depth)])
         self.norm = norm_layer(embed_dim)
+
+        self.clip_encoder, _, self.preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
         # --------------------------------------------------------------------------
 
         # --------------------------------------------------------------------------
@@ -52,9 +49,6 @@ class MaskedAutoencoderViTNoCT(nn.Module):
     def initialize_weights(self):
         # initialization
         # initialize (and freeze) pos_embed by sin-cos embedding
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.patch_embed.num_patches**.5), cls_token=False)
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
-
         decoder_pos_embed = get_2d_sincos_pos_embed(self.decoder_pos_embed.shape[-1], int(self.patch_embed.num_patches**.5), cls_token=False)
         self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
 
@@ -134,21 +128,14 @@ class MaskedAutoencoderViTNoCT(nn.Module):
         return x_masked, mask, ids_restore
 
     def forward_encoder(self, x, mask_ratio):
-        # embed patches
-        x = self.patch_embed(x)
-
-        # add pos embed w/o cls token
-        x = x + self.pos_embed
-
-        # masking: length -> length * mask_ratio
-        x, mask, ids_restore = self.random_masking(x, mask_ratio)
-
-        # apply Transformer blocks
-        for blk in self.blocks:
-            x = blk(x)
+        # print(x.shape)
+        x = self.clip_encoder.encode_image(x)
+        # 保留mask和id_restore的生成逻辑
+        x, mask, ids_restore = self.random_masking(x, mask_ratio)  
         x = self.norm(x)
+        
+        return x, mask, ids_restore 
 
-        return x, mask, ids_restore
 
     def forward_decoder(self, x, ids_restore):
         # embed tokens
@@ -205,15 +192,14 @@ class MaskedAutoencoderViTNoCT(nn.Module):
 
 def mae_vit_base_patch16_dec512d8b(**kwargs):
     model = MaskedAutoencoderViTNoCT(
-        patch_size=16, embed_dim=768, depth=12, num_heads=12,
+        patch_size=16, embed_dim=768, 
         decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
         mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
 
-
 def mae_vit_large_patch16_dec512d8b(**kwargs):
     model = MaskedAutoencoderViTNoCT(
-        patch_size=16, embed_dim=1024, depth=24, num_heads=16,
+        patch_size=16, embed_dim=1024, 
         decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
         mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
@@ -221,7 +207,7 @@ def mae_vit_large_patch16_dec512d8b(**kwargs):
 
 def mae_vit_huge_patch14_dec512d8b(**kwargs):
     model = MaskedAutoencoderViTNoCT(
-        patch_size=14, embed_dim=1280, depth=32, num_heads=16,
+        patch_size=14, embed_dim=1280,
         decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
         mlp_ratio=4, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
     return model
