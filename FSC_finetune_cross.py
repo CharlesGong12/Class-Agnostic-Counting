@@ -16,9 +16,7 @@ from torch.utils.tensorboard import SummaryWriter
 from torch.utils.data import Dataset
 import torchvision
 import wandb
-import timm
 
-assert "0.4.5" <= timm.__version__ <= "0.4.9"  # version check
 import timm.optim.optim_factory as optim_factory
 
 import util.misc as misc
@@ -60,10 +58,10 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='./data/FSC147/', type=str,
+    parser.add_argument('--data_path', default='/tmp/datasets/', type=str,
                         help='dataset path')
     parser.add_argument('--anno_file', default='annotation_FSC147_384.json', type=str,
-                     help='annotation json file')
+                        help='annotation json file')
     parser.add_argument('--data_split_file', default='Train_Test_Val_FSC_147.json', type=str,
                         help='data split json file')
     parser.add_argument('--class_file', default='ImageClasses_FSC147.txt', type=str,
@@ -77,7 +75,7 @@ def get_args_parser():
     parser.add_argument('--device', default='cuda',
                         help='device to use for training / testing')
     parser.add_argument('--seed', default=0, type=int)
-    parser.add_argument('--resume', default='./data/out/pre_4_dir/checkpoint-300.pth',
+    parser.add_argument('--resume', default=None, type=str,
                         help='resume from checkpoint')
 
     # Training parameters
@@ -102,7 +100,7 @@ def get_args_parser():
                         help='path where to tensorboard log')
     parser.add_argument("--title", default="CounTR_finetuning", type=str)
     parser.add_argument("--wandb", default="counting", type=str)
-    parser.add_argument("--team", default="wsense", type=str)
+    parser.add_argument("--team", default="fdudip", type=str)
     parser.add_argument("--wandb_id", default=None, type=str)
 
     return parser
@@ -204,7 +202,8 @@ def main(args):
     )
 
     # define the model
-    model = models_mae_cross.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
+    model = models_mae_cross.__dict__[args.model](
+        norm_pix_loss=args.norm_pix_loss)
 
     model.to(device)
 
@@ -224,11 +223,13 @@ def main(args):
     print("effective batch size: %d" % eff_batch_size)
 
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=True)
+        model = torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=[args.gpu], find_unused_parameters=True)
         model_without_ddp = model.module
 
     # following timm: set wd as 0 for bias and norm layers
-    param_groups = optim_factory.add_weight_decay(model_without_ddp, args.weight_decay)
+    param_groups = optim_factory.add_weight_decay(
+        model_without_ddp, args.weight_decay)
     optimizer = torch.optim.AdamW(param_groups, lr=args.lr, betas=(0.9, 0.95))
     print(optimizer)
 
@@ -247,7 +248,8 @@ def main(args):
         # train one epoch
         model.train(True)
         metric_logger = misc.MetricLogger(delimiter="  ")
-        metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+        metric_logger.add_meter('lr', misc.SmoothedValue(
+            window_size=1, fmt='{value:.6f}'))
         header = 'Epoch: [{}]'.format(epoch)
         print_freq = 20
         accum_iter = args.accum_iter
@@ -265,10 +267,12 @@ def main(args):
 
         for data_iter_step, (samples, gt_density, boxes, m_flag) in enumerate(
                 metric_logger.log_every(data_loader_train, print_freq, header)):
-            epoch_1000x = int((data_iter_step / len(data_loader_train) + epoch) * 1000)
+            epoch_1000x = int(
+                (data_iter_step / len(data_loader_train) + epoch) * 1000)
 
             if data_iter_step % accum_iter == 0:
-                lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(data_loader_train) + epoch, args)
+                lr_sched.adjust_learning_rate(
+                    optimizer, data_iter_step / len(data_loader_train) + epoch, args)
 
             samples = samples.to(device, non_blocking=True).half()
             gt_density = gt_density.to(device, non_blocking=True).half()
@@ -318,10 +322,14 @@ def main(args):
                     fig = output[0].unsqueeze(0).repeat(3, 1, 1)
                     f1 = gt_density[0].unsqueeze(0).repeat(3, 1, 1)
 
-                    log_writer.add_images('bboxes', (boxes[0]), int(epoch), dataformats='NCHW')
-                    log_writer.add_images('gt_density', (samples[0] / 2 + f1 / 10), int(epoch), dataformats='CHW')
-                    log_writer.add_images('density map', (fig / 20), int(epoch), dataformats='CHW')
-                    log_writer.add_images('density map overlay', (samples[0] / 2 + fig / 10), int(epoch), dataformats='CHW')
+                    log_writer.add_images(
+                        'bboxes', (boxes[0]), int(epoch), dataformats='NCHW')
+                    log_writer.add_images(
+                        'gt_density', (samples[0] / 2 + f1 / 10), int(epoch), dataformats='CHW')
+                    log_writer.add_images(
+                        'density map', (fig / 20), int(epoch), dataformats='CHW')
+                    log_writer.add_images(
+                        'density map overlay', (samples[0] / 2 + fig / 10), int(epoch), dataformats='CHW')
 
                 if wandb_run is not None:
                     wandb_bboxes = []
@@ -333,14 +341,20 @@ def main(args):
                         w_gt_density = samples[i] / 2 + f1 / 5
                         w_d_map = fig / 10
                         w_d_map_overlay = samples[i] / 2 + fig / 5
-                        w_boxes = torch.cat([boxes[i][x, :, :, :] for x in range(boxes[i].shape[0])], 2)
-                        w_densities = torch.cat([w_gt_density, w_d_map, w_d_map_overlay], dim=2)
+                        w_boxes = torch.cat([boxes[i][x, :, :, :]
+                                            for x in range(boxes[i].shape[0])], 2)
+                        w_densities = torch.cat(
+                            [w_gt_density, w_d_map, w_d_map_overlay], dim=2)
                         w_densities = misc.min_max(w_densities)
-                        wandb_bboxes += [wandb.Image(torchvision.transforms.ToPILImage()(w_boxes))]
-                        wandb_densities += [wandb.Image(torchvision.transforms.ToPILImage()(w_densities))]
+                        wandb_bboxes += [wandb.Image(
+                            torchvision.transforms.ToPILImage()(w_boxes))]
+                        wandb_densities += [wandb.Image(
+                            torchvision.transforms.ToPILImage()(w_densities))]
 
-                    wandb.log({f"Bounding boxes": wandb_bboxes}, step=epoch_1000x, commit=False)
-                    wandb.log({f"Density predictions": wandb_densities}, step=epoch_1000x, commit=False)
+                    wandb.log({f"Bounding boxes": wandb_bboxes},
+                              step=epoch_1000x, commit=False)
+                    wandb.log({f"Density predictions": wandb_densities},
+                              step=epoch_1000x, commit=False)
 
             if not math.isfinite(loss_value):
                 print("Loss is {}, stopping training".format(loss_value))
@@ -365,20 +379,25 @@ def main(args):
                     """ We use epoch_1000x as the x-axis in tensorboard.
                     This calibrates different curves when batch size changes.
                     """
-                    log_writer.add_scalar('train_loss', loss_value_reduce, epoch_1000x)
+                    log_writer.add_scalar(
+                        'train_loss', loss_value_reduce, epoch_1000x)
                     log_writer.add_scalar('lr', lr, epoch_1000x)
-                    log_writer.add_scalar('MAE', batch_mae / args.batch_size, epoch_1000x)
-                    log_writer.add_scalar('RMSE', (batch_rmse / args.batch_size) ** 0.5, epoch_1000x)
+                    log_writer.add_scalar(
+                        'MAE', batch_mae / args.batch_size, epoch_1000x)
+                    log_writer.add_scalar(
+                        'RMSE', (batch_rmse / args.batch_size) ** 0.5, epoch_1000x)
                 if wandb_run is not None:
                     log = {"train/loss": loss_value_reduce, "train/lr": lr,
                            "train/MAE": batch_mae / args.batch_size,
                            "train/RMSE": (batch_rmse / args.batch_size) ** 0.5}
-                    wandb.log(log, step=epoch_1000x, commit=True if data_iter_step == 0 else False)
+                    wandb.log(log, step=epoch_1000x,
+                              commit=True if data_iter_step == 0 else False)
 
         # Only use 1 batches when overfitting
         metric_logger.synchronize_between_processes()
         print("Averaged stats:", metric_logger)
-        train_stats = {k: meter.global_avg for k, meter in metric_logger.meters.items()}
+        train_stats = {k: meter.global_avg for k,
+                       meter in metric_logger.meters.items()}
 
         # save train status and model
         if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs):
@@ -398,7 +417,7 @@ def main(args):
                      'epoch': epoch, }
 
         print('Current MAE: {:5.2f}, RMSE: {:5.2f} '.format(train_mae / (len(data_loader_train) * args.batch_size), (
-                    train_rmse / (len(data_loader_train) * args.batch_size)) ** 0.5))
+            train_rmse / (len(data_loader_train) * args.batch_size)) ** 0.5))
 
         if args.output_dir and misc.is_main_process():
             if log_writer is not None:

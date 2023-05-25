@@ -5,7 +5,7 @@ import numpy as np
 import os
 import time
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
 import scipy.ndimage as ndimage
 import pandas as pd
@@ -17,9 +17,6 @@ from torch.utils.data import Dataset
 import torchvision
 from torchvision import transforms
 import torchvision.transforms.functional as TF
-import timm
-
-assert "0.4.5" <= timm.__version__ <= "0.4.9"  # version check
 
 import util.misc as misc
 import models_mae_cross
@@ -59,7 +56,7 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='./data/FSC147/', type=str,
+    parser.add_argument('--data_path', default='/tmp/datasets/', type=str,
                         help='dataset path')
     parser.add_argument('--anno_file', default='annotation_FSC147_384.json', type=str,
                         help='annotation json file')
@@ -209,6 +206,7 @@ class TestData(Dataset):
 
 
 def main(args):
+    font = ImageFont.truetype("Helvetica.ttc", 32)
     misc.init_distributed_mode(args)
 
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
@@ -277,6 +275,8 @@ def main(args):
     gt_array = []
     pred_arr = []
     name_arr = []
+
+    err_sort = []
 
     for data_iter_step, (samples, gt_dots, boxes, pos, gt_map, im_name) in \
             enumerate(metric_logger.log_every(data_loader_test, print_freq, header)):
@@ -411,16 +411,22 @@ def main(args):
             box_map = box_map.unsqueeze(0).repeat(3, 1, 1)
         pred = density_map.unsqueeze(0) if s_cnt < 1 else misc.make_grid(r_densities, h, w).unsqueeze(0)
         pred = torch.cat((pred, torch.zeros_like(pred), torch.zeros_like(pred))) * 5
-        fig = fig + pred + box_map
+        drawed = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
+        draw = ImageDraw.Draw(drawed)
+        draw.text((w-120, h-50), str(round(gt_cnt)), (215, 123, 175), font=font)
+        drawed = np.array(drawed).transpose((2, 0, 1))
+        fig = fig + pred + box_map + torch.tensor(np.array(drawed), device=device)
         fig = torch.clamp(fig, 0, 1)
 
         pred_img = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
         draw = ImageDraw.Draw(pred_img)
-        draw.text((w-50, h-50), str(round(pred_cnt)), (255, 255, 255))
+        draw.text((w-120, h-50), str(round(pred_cnt)), (215, 123, 175), font=font)
         pred_img = np.array(pred_img).transpose((2, 0, 1))
         pred_img = torch.tensor(np.array(pred_img), device=device) + pred
         full = torch.cat((samples[0], fig, pred_img), -1)
         torchvision.utils.save_image(full, (os.path.join(args.output_dir, f'full_{im_name.stem}__{round(pred_cnt)}{im_name.suffix}')))
+
+        err_sort.append((cnt_err, im_name.stem))
 
         torch.cuda.synchronize()
 
@@ -432,6 +438,9 @@ def main(args):
 
     print('Current MAE: {:5.2f}, RMSE: {:5.2f} '.format(train_mae / (len(data_loader_test)), (
                 train_rmse / (len(data_loader_test))) ** 0.5))
+    
+    err_sort.sort(key=lambda x: x[0], reverse=True)
+    print("Top error item", [x[1] for x in err_sort[:20]])
 
     if args.output_dir and misc.is_main_process():
         with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:

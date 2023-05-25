@@ -20,7 +20,6 @@ from torch.utils.data import Dataset
 import wandb
 import timm
 
-assert "0.4.5" <= timm.__version__ <= "0.4.9"  # version check
 import timm.optim.optim_factory as optim_factory
 
 import util.misc as misc
@@ -101,7 +100,7 @@ def get_args_parser():
     parser.add_argument('--log_dir', default='./logs/pre_4_dir',
                         help='path where to tensorboard log')
     parser.add_argument("--title", default="CounTR_pretraining", type=str)
-    parser.add_argument("--wandb", default="counting", type=str)
+    parser.add_argument("--wandb", default=None, type=str)
     parser.add_argument("--team", default="wsense", type=str)
     parser.add_argument("--wandb_id", default=None, type=str)
 
