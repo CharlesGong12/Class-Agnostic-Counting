@@ -48,7 +48,7 @@ class FSCTrainer(Trainer):
                                        num_workers=args.num_workers,
                                        pin_memory=True)
         val_datasets = FSCData(args.data_dir, method='val')
-        val_dataloaders = DataLoader(val_datasets, 1, shuffle=True,
+        val_dataloaders = DataLoader(val_datasets, 1, shuffle=False,
                                                       num_workers=args.num_workers, pin_memory=True)
         test_datasets = FSCData(args.data_dir, method='test')
         test_dataloaders = DataLoader(test_datasets, 1, shuffle=False,
