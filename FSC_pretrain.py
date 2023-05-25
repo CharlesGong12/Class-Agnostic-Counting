@@ -20,7 +20,7 @@ from torch.utils.data import Dataset
 import wandb
 import timm
 
-assert "0.4.5" <= timm.__version__ <= "0.4.9"  # version check
+# assert "0.4.5" <= timm.__version__ <= "0.4.9"  # version check
 import timm.optim.optim_factory as optim_factory
 
 import util.misc as misc
@@ -102,7 +102,7 @@ def get_args_parser():
                         help='path where to tensorboard log')
     parser.add_argument("--title", default="CounTR_pretraining", type=str)
     parser.add_argument("--wandb", default="counting", type=str)
-    parser.add_argument("--team", default="wsense", type=str)
+    parser.add_argument("--team", default="fdudip", type=str)
     parser.add_argument("--wandb_id", default=None, type=str)
 
     return parser
@@ -228,7 +228,7 @@ def main(args):
     print(optimizer)
     loss_scaler = NativeScaler()
 
-    misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
+    # misc.load_model(args=args, model_without_ddp=model_without_ddp, optimizer=optimizer, loss_scaler=loss_scaler)
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()

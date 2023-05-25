@@ -3,6 +3,7 @@
 !weights/FSC147.pth
 **__pycache__
 .idea/
+data/
 /data/*
 !/data/foring00025.png
 !/data/letsea_14/annotations_few.json
