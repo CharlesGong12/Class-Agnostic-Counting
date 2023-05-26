@@ -508,7 +508,7 @@ def main(args):
                            "Train/MAE": batch_mae / args.batch_size,
                            "Train/RMSE": (batch_rmse / args.batch_size) ** 0.5}
                     wandb.log(log, step=epoch_1000x,
-                              commit=F if data_iter_step == 0 else False)
+                              commit=False)
 
         # Only use 1 batches when overfitting
         metric_logger.synchronize_between_processes()
@@ -625,7 +625,7 @@ def main(args):
             log = {"Val/MAE": val_mae / len(data_loader_val),
                     "Val/RMSE": (val_rmse / len(data_loader_val)) ** 0.5}
             wandb.log(log, step=epoch_1000x,
-                        commit=F if data_iter_step == 0 else False)
+                        commit=True if data_iter_step == 0 else False)
 
         # save train status and model
         if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs):
