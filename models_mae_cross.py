@@ -132,7 +132,6 @@ class SupervisedMAE(nn.Module):
         if shot_num > 0:
             y = self.clip_enc.encode_text(word_vectors.squeeze(1)).unsqueeze(1)
         else:
-            print(self.shot_token.shape)
             y = self.shot_token.repeat(x.shape[0],1).unsqueeze(1).to(x.device)
         
         # apply Transformer blocks

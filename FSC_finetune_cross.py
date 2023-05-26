@@ -451,7 +451,7 @@ def main(args):
         train_stats = {k: meter.global_avg for k,
                        meter in metric_logger.meters.items()}
         
-        # Begin Validation
+        # Begin Text Prompt Validation
         val_mae = 0
         val_rmse = 0
         model.eval()
@@ -462,9 +462,7 @@ def main(args):
             samples = samples.to(device, non_blocking=True)
             gt_dots = gt_dots.to(device, non_blocking=True).half()
             _, _, h, w = samples.shape
-
             wv = wv.to(device, non_blocking=True)
-
             density_map = torch.zeros([h, w])
             density_map = density_map.to(device, non_blocking=True)
             start = 0
@@ -477,15 +475,12 @@ def main(args):
                     d1 = b1(output[:, 0:prev - start + 1])
                     b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
                     d2 = b2(output[:, prev - start + 1:384])
-
                     b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
                     density_map_l = b3(density_map[:, 0:start])
                     density_map_m = b1(density_map[:, start:prev + 1])
                     b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
                     density_map_r = b4(density_map[:, prev + 1:w])
-
                     density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
-
                     prev = start + 383
                     start = start + 128
                     if start + 383 >= w:
@@ -493,42 +488,84 @@ def main(args):
                             break
                         else:
                             start = w - 384
-
             pred_cnt = torch.sum(density_map / 60).item()
-
             gt_cnt = gt_dots.shape[1]
             cnt_err = abs(pred_cnt - gt_cnt)
             val_mae += cnt_err
             val_rmse += cnt_err ** 2
-
         val_metric_logger.synchronize_between_processes()
+        val_zs_mae = 0
+        val_zs_rmse = 0
+        val_zs_metric_logger = misc.MetricLogger(delimiter="  ")
+        for data_iter_step, (samples, gt_dots, class_name, wv, gt_map, im_name) in \
+            enumerate(val_zs_metric_logger.log_every(data_loader_test, print_freq, header)):
+            im_name = Path(im_name[0])
+            samples = samples.to(device, non_blocking=True)
+            gt_dots = gt_dots.to(device, non_blocking=True).half()
+            _, _, h, w = samples.shape
+            wv = wv.to(device, non_blocking=True)
+            density_map = torch.zeros([h, w])
+            density_map = density_map.to(device, non_blocking=True)
+            start = 0
+            prev = -1
+            with torch.no_grad():
+                while start + 383 < w:
+                    output, = model(samples[:, :, :, start:start + 384], wv, 0)
+                    output = output.squeeze(0)
+                    b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
+                    d1 = b1(output[:, 0:prev - start + 1])
+                    b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
+                    d2 = b2(output[:, prev - start + 1:384])
+                    b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
+                    density_map_l = b3(density_map[:, 0:start])
+                    density_map_m = b1(density_map[:, start:prev + 1])
+                    b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
+                    density_map_r = b4(density_map[:, prev + 1:w])
+                    density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
+                    prev = start + 383
+                    start = start + 128
+                    if start + 383 >= w:
+                        if start == w - 384 + 128:
+                            break
+                        else:
+                            start = w - 384
+            pred_cnt = torch.sum(density_map / 60).item()
+            gt_cnt = gt_dots.shape[1]
+            cnt_err = abs(pred_cnt - gt_cnt)
+            val_zs_mae += cnt_err
+            val_zs_rmse += cnt_err ** 2
+        val_zs_metric_logger.synchronize_between_processes()
 
         if misc.is_main_process():
             if wandb_run is not None:
-                log = {"Val/MAE": val_mae / len(data_loader_test),
-                        "Val/RMSE": (val_rmse / len(data_loader_test)) ** 0.5}
+                log = {"Val/MAE with text": val_mae / len(data_loader_test),
+                        "Val/RMSE with text": (val_rmse / len(data_loader_test)) ** 0.5,
+                        "Val/MAE without text": val_zs_mae / len(data_loader_test),
+                        "Val/RMSE without text": (val_zs_rmse / len(data_loader_test)) ** 0.5}
                 wandb.log(log, step=epoch_1000x)
 
         # save train status and model
         if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs) and misc.is_main_process():
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch, suffix=f"finetuning_{epoch}")
+                loss_scaler=loss_scaler, epoch=epoch, suffix=f"_{epoch}")
         if args.output_dir and val_mae / (len(data_loader_test) * args.batch_size) < min_MAE:
             min_MAE = val_mae / (len(data_loader_test) * args.batch_size)
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch, suffix="finetuning_minMAE")
+                loss_scaler=loss_scaler, epoch=epoch, suffix="min_MAE")
 
         # Output log status
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'Current MAE': train_mae / (len(data_loader_train) * args.batch_size),
                      'RMSE': (train_rmse / (len(data_loader_train) * args.batch_size)) ** 0.5,
-                     'epoch': epoch, 'Val MAE': val_mae / len(data_loader_test), "Val/RMSE": (val_rmse / len(data_loader_test)) ** 0.5}
+                     'epoch': epoch, 'Val MAE with text': val_mae / len(data_loader_test), "Val/RMSE with text": (val_rmse / len(data_loader_test)) ** 0.5,
+                     'Val MAE without text': val_zs_mae / len(data_loader_test), "Val/RMSE without text": (val_zs_rmse / len(data_loader_test)) ** 0.5}
 
         print('Current MAE: {:5.2f}, RMSE: {:5.2f} '.format(train_mae / (len(data_loader_train) * args.batch_size), (
             train_rmse / (len(data_loader_train) * args.batch_size)) ** 0.5))
-        print('Val MAE', val_mae / len(data_loader_test))
+        print('Val MAE with text', val_mae / len(data_loader_test))
+        print('Val MAE without text', val_zs_mae / len(data_loader_test))
 
         if args.output_dir and misc.is_main_process():
             # if log_writer is not None:
