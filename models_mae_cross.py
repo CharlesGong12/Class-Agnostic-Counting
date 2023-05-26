@@ -94,7 +94,7 @@ class SupervisedMAE(nn.Module):
         # apply Transformer blocks
         for blk in self.decoder_blocks:
             x = blk(x, y)
-            print(x.shape)
+            #print(x.shape)
         x = self.decoder_norm(x)
         
         # Density map regression
@@ -114,7 +114,7 @@ class SupervisedMAE(nn.Module):
         x = F.interpolate(
                         self.decode_head3(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
         #print(x.shape)
-        x=F.interpolate(x, size=(384,224), mode='bilinear', align_corners=False)
+        x=F.interpolate(x, size=(224,224), mode='bilinear', align_corners=False)
         x = x.squeeze(-3)
         #print(x.shape)
         return x

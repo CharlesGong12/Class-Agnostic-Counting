@@ -176,7 +176,8 @@ class ResizeTrainImage(ResizeSomeImage):
 
         start = random.randint(0, new_W - 224)
         reresized_image = TF.crop(re_image, 0, start, 224, 224)
-        reresized_density = resized_density[:, start:start + 224]
+        reresized_density=TF.crop(resized_density, 0, start, 224, 224)
+        # reresized_density = resized_density[:, start:start + 224]
 
         # Gaussian distribution density map
         reresized_density = ndimage.gaussian_filter(reresized_density.numpy(), sigma=(1, 1), order=0)
@@ -185,7 +186,7 @@ class ResizeTrainImage(ResizeSomeImage):
         reresized_density = reresized_density * 60
         reresized_density = torch.from_numpy(reresized_density)
 
-        resized_image = openai_normalize(resized_image)
+        reresized_image = openai_normalize(reresized_image)
 
         # Word vector
         wv = tokenizer([self.class_dict[im_id]])
