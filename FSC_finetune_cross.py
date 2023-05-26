@@ -29,7 +29,6 @@ import open_clip
 from torchvision import transforms
 import scipy.ndimage as ndimage
 import torch.nn as nn
-from util.FSC147 import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 
 import warnings
 
@@ -165,12 +164,12 @@ class TestData(Dataset):
         image.load()
         W, H = image.size
 
-        new_H = 384
-        new_W = 16 * int((W / H * 384) / 16)
+        new_H = 224
+        new_W = 16 * int((W / H * 224) / 16)
         scale_factor_W = float(new_W) / W
         scale_factor_H = float(new_H) / H
         image = transforms.Resize((new_H, new_W))(image)
-        Normalize = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=OPENAI_DATASET_MEAN, std=OPENAI_DATASET_STD)])
+        Normalize = transforms.Compose([transforms.ToTensor()])
         image = Normalize(image)
 
         # Only for visualisation purpose, no need for ground truth density map indeed.
@@ -384,27 +383,26 @@ def main(args):
                 #         'density map', (fig / 20), int(epoch), dataformats='CHW')
                 #     log_writer.add_images(
                 #         'density map overlay', (samples[0] / 2 + fig / 10), int(epoch), dataformats='CHW')
-                wandb_densities = []
-
-                for i in range(word_vectors.shape[0]):
-                    fig = output[i].unsqueeze(0).repeat(3, 1, 1)
-                    f1 = gt_density[i].unsqueeze(0).repeat(3, 1, 1)
-                    _, h, w = samples[i].shape
-                    #print(samples[i].shape, fig.shape, f1.shape)
-                    w_gt_density = samples[i] / 2 + f1 / 5
-                    w_d_map = fig / 10
-                    w_d_map_overlay = samples[i] / 2 + fig / 5
-                    # pred_img = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
-                    # draw = ImageDraw.Draw(pred_img)
-                    # draw.text((50, h-50), str(''.join(class_name[i])), (215, 123, 175), font=font)
-                    # w_d_map += torch.tensor(np.array(pred_img), device=w_d_map.device)
-                    w_densities = torch.cat(
-                        [w_gt_density, w_d_map, w_d_map_overlay], dim=2)
-                    w_densities = misc.min_max(w_densities)
-                    wandb_densities += [wandb.Image(
-                        torchvision.transforms.ToPILImage()(w_densities))]
                 if wandb_run is not None:
-                    
+                    wandb_densities = []
+
+                    for i in range(word_vectors.shape[0]):
+                        fig = output[i].unsqueeze(0).repeat(3, 1, 1)
+                        f1 = gt_density[i].unsqueeze(0).repeat(3, 1, 1)
+                        _, h, w = samples[i].shape
+                        #print(samples[i].shape, fig.shape, f1.shape)
+                        w_gt_density = samples[i] / 2 + f1 / 5
+                        w_d_map = fig / 10
+                        w_d_map_overlay = samples[i] / 2 + fig / 5
+                        # pred_img = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
+                        # draw = ImageDraw.Draw(pred_img)
+                        # draw.text((50, h-50), str(''.join(class_name[i])), (215, 123, 175), font=font)
+                        # w_d_map += torch.tensor(np.array(pred_img), device=w_d_map.device)
+                        w_densities = torch.cat(
+                            [w_gt_density, w_d_map, w_d_map_overlay], dim=2)
+                        w_densities = misc.min_max(w_densities)
+                        wandb_densities += [wandb.Image(
+                            torchvision.transforms.ToPILImage()(w_densities))]
                         
                     wandb.log({f"Density Predictions": wandb_densities},
                               step=epoch_1000x, commit=False)
@@ -452,7 +450,7 @@ def main(args):
         train_stats = {k: meter.global_avg for k,
                        meter in metric_logger.meters.items()}
         
-        # Begin Validation
+        # Begin Text Prompt Validation
         val_mae = 0
         val_rmse = 0
         model.eval()
@@ -463,9 +461,7 @@ def main(args):
             samples = samples.to(device, non_blocking=True)
             gt_dots = gt_dots.to(device, non_blocking=True).half()
             _, _, h, w = samples.shape
-
             wv = wv.to(device, non_blocking=True)
-
             density_map = torch.zeros([h, w])
             density_map = density_map.to(device, non_blocking=True)
             start = 0
@@ -478,15 +474,12 @@ def main(args):
                     d1 = b1(output[:, 0:prev - start + 1])
                     b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
                     d2 = b2(output[:, prev - start + 1:384])
-
                     b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
                     density_map_l = b3(density_map[:, 0:start])
                     density_map_m = b1(density_map[:, start:prev + 1])
                     b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
                     density_map_r = b4(density_map[:, prev + 1:w])
-
                     density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
-
                     prev = start + 383
                     start = start + 128
                     if start + 383 >= w:
@@ -494,20 +487,60 @@ def main(args):
                             break
                         else:
                             start = w - 384
-
             pred_cnt = torch.sum(density_map / 60).item()
-
             gt_cnt = gt_dots.shape[1]
             cnt_err = abs(pred_cnt - gt_cnt)
             val_mae += cnt_err
             val_rmse += cnt_err ** 2
-
         val_metric_logger.synchronize_between_processes()
+        val_zs_mae = 0
+        val_zs_rmse = 0
+        val_zs_metric_logger = misc.MetricLogger(delimiter="  ")
+        for data_iter_step, (samples, gt_dots, class_name, wv, gt_map, im_name) in \
+            enumerate(val_zs_metric_logger.log_every(data_loader_test, print_freq, header)):
+            im_name = Path(im_name[0])
+            samples = samples.to(device, non_blocking=True)
+            gt_dots = gt_dots.to(device, non_blocking=True).half()
+            _, _, h, w = samples.shape
+            wv = wv.to(device, non_blocking=True)
+            density_map = torch.zeros([h, w])
+            density_map = density_map.to(device, non_blocking=True)
+            start = 0
+            prev = -1
+            with torch.no_grad():
+                while start + 383 < w:
+                    output, = model(samples[:, :, :, start:start + 384], wv, 0)
+                    output = output.squeeze(0)
+                    b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
+                    d1 = b1(output[:, 0:prev - start + 1])
+                    b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
+                    d2 = b2(output[:, prev - start + 1:384])
+                    b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
+                    density_map_l = b3(density_map[:, 0:start])
+                    density_map_m = b1(density_map[:, start:prev + 1])
+                    b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
+                    density_map_r = b4(density_map[:, prev + 1:w])
+                    density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
+                    prev = start + 383
+                    start = start + 128
+                    if start + 383 >= w:
+                        if start == w - 384 + 128:
+                            break
+                        else:
+                            start = w - 384
+            pred_cnt = torch.sum(density_map / 60).item()
+            gt_cnt = gt_dots.shape[1]
+            cnt_err = abs(pred_cnt - gt_cnt)
+            val_zs_mae += cnt_err
+            val_zs_rmse += cnt_err ** 2
+        val_zs_metric_logger.synchronize_between_processes()
 
         if misc.is_main_process():
             if wandb_run is not None:
-                log = {"Val/MAE": val_mae / len(data_loader_test),
-                        "Val/RMSE": (val_rmse / len(data_loader_test)) ** 0.5}
+                log = {"Val/MAE with text": val_mae / len(data_loader_test),
+                        "Val/RMSE with text": (val_rmse / len(data_loader_test)) ** 0.5,
+                        "Val/MAE without text": val_zs_mae / len(data_loader_test),
+                        "Val/RMSE without text": (val_zs_rmse / len(data_loader_test)) ** 0.5}
                 wandb.log(log, step=epoch_1000x)
 
         # save train status and model
@@ -519,17 +552,19 @@ def main(args):
             min_MAE = val_mae / (len(data_loader_test) * args.batch_size)
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch, suffix="_minMAE")
+                loss_scaler=loss_scaler, epoch=epoch, suffix="min_MAE")
 
         # Output log status
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'Current MAE': train_mae / (len(data_loader_train) * args.batch_size),
                      'RMSE': (train_rmse / (len(data_loader_train) * args.batch_size)) ** 0.5,
-                     'epoch': epoch, 'Val MAE': val_mae / len(data_loader_test), "Val/RMSE": (val_rmse / len(data_loader_test)) ** 0.5}
+                     'epoch': epoch, 'Val MAE with text': val_mae / len(data_loader_test), "Val/RMSE with text": (val_rmse / len(data_loader_test)) ** 0.5,
+                     'Val MAE without text': val_zs_mae / len(data_loader_test), "Val/RMSE without text": (val_zs_rmse / len(data_loader_test)) ** 0.5}
 
         print('Current MAE: {:5.2f}, RMSE: {:5.2f} '.format(train_mae / (len(data_loader_train) * args.batch_size), (
             train_rmse / (len(data_loader_train) * args.batch_size)) ** 0.5))
-        print('Val MAE', val_mae / len(data_loader_test))
+        print('Val MAE with text', val_mae / len(data_loader_test))
+        print('Val MAE without text', val_zs_mae / len(data_loader_test))
 
         if args.output_dir and misc.is_main_process():
             # if log_writer is not None:
