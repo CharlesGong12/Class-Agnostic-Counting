@@ -80,14 +80,13 @@ class SupervisedMAE(nn.Module):
 
     def forward_decoder(self, x, word_vectors, shot_num=3):
         x = self.decoder_embed(x)
-
+        
         if shot_num > 0:
             y = self.clip_enc.encode_text(word_vectors.squeeze(1)).unsqueeze(1)
-            # print("Encoded", y.shape)
         else:
-            y = self.shot_token.repeat(word_vectors.shape[1],1).unsqueeze(0).to(x.device)
-            y = y.transpose(0,1) # y [3,N,C]->[N,3,C]
-        # print("Reshaped", x.shape, y.shape)
+            print(self.shot_token.shape)
+            y = self.shot_token.repeat(x.shape[0],1).unsqueeze(1).to(x.device)
+        
         # apply Transformer blocks
         for blk in self.decoder_blocks:
             x = blk(x, y)
