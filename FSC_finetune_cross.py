@@ -339,7 +339,7 @@ def main(args):
             #     shot_num = random.randint(0, 3)
             # else:
             #     shot_num = random.randint(1, 3)
-            shot_num = 1
+            shot_num = random.randint(0, 1)
 
             with torch.cuda.amp.autocast():
                 output = model(samples, word_vectors, shot_num)
