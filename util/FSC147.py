@@ -57,9 +57,9 @@ class ResizePreTrainImage(ResizeSomeImage):
         image, lines_boxes, density = sample['image'], sample['lines_boxes'], sample['gt_density']
 
         W, H = image.size
-
-        new_H = 16 * int(H / 16)
-        new_W = 16 * int(W / 16)
+        new_H=new_W=224
+        # new_H = 16 * int(H / 16)
+        # new_W = 16 * int(W / 16)
         '''scale_factor = float(256)/ H
         new_H = 16*int(H*scale_factor/16)
         new_W = 16*int(W*scale_factor/16)'''
@@ -292,7 +292,7 @@ class ResizeTrainImage(ResizeSomeImage):
 
 
 PreTrainNormalize = transforms.Compose([
-    transforms.RandomResizedCrop(384, scale=(0.2, 1.0), interpolation=3),
+    transforms.RandomResizedCrop(224, scale=(0.2, 1.0), interpolation=3),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     # transforms.Normalize(mean=IM_NORM_MEAN, std=IM_NORM_STD)

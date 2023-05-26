@@ -23,7 +23,7 @@ class MaskedAutoencoderViTNoCT(nn.Module):
 
         self.norm = norm_layer(embed_dim)
 
-        self.clip_encoder, _, self.preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
+        self.clip_encoder, self.preprocess,_ = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
         # --------------------------------------------------------------------------
 
         # --------------------------------------------------------------------------
@@ -127,25 +127,16 @@ class MaskedAutoencoderViTNoCT(nn.Module):
 
         return x_masked, mask, ids_restore
 
-    def forward_encoder(self, x, mask_ratio):
+    def forward_encoder(self, x):
         # print(x.shape)
         x = self.clip_encoder.encode_image(x)
         # 保留mask和id_restore的生成逻辑
-        x, mask, ids_restore = self.random_masking(x, mask_ratio)  
         x = self.norm(x)
         
-        return x, mask, ids_restore 
+        return x
 
 
-    def forward_decoder(self, x, ids_restore):
-        # embed tokens
-        x = self.decoder_embed(x)
-
-        # append mask tokens to sequence
-        mask_tokens = self.mask_token.repeat(x.shape[0], ids_restore.shape[1] - x.shape[1], 1)
-        x_ = torch.cat([x, mask_tokens], dim=1)  # no cls token
-        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x.shape[2]))  # unshuffle
-        x = x_ # append cls token
+    def forward_decoder(self, x):
 
         # add pos embed
         x = x + self.decoder_pos_embed
@@ -160,11 +151,10 @@ class MaskedAutoencoderViTNoCT(nn.Module):
 
         return x
 
-    def forward_loss(self, imgs, pred, mask):
+    def forward_loss(self, imgs, pred):
         """
         imgs: [N, 3, H, W]
         pred: [N, L, p*p*3]
-        mask: [N, L], 0 is keep, 1 is remove, 
         """
         target = self.patchify(imgs)
         if self.norm_pix_loss:
@@ -176,18 +166,15 @@ class MaskedAutoencoderViTNoCT(nn.Module):
         loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
 
         # For mean loss on all patches
-        N, L = mask.shape
-        mask_s = torch.ones([N, L], device=imgs.device)
-        loss = (loss * mask_s).sum() / mask_s.sum()
 
         #loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
         return loss
 
-    def forward(self, imgs, mask_ratio=0.75):
-        latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
-        pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
-        loss = self.forward_loss(imgs, pred, mask)
-        return loss, pred, mask
+    def forward(self, imgs):
+        latent = self.forward_encoder(imgs)
+        pred = self.forward_decoder(latent)  # [N, L, p*p*3]
+        loss = self.forward_loss(imgs, pred)
+        return loss, pred
 
 
 def mae_vit_base_patch16_dec512d8b(**kwargs):

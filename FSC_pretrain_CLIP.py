@@ -260,7 +260,7 @@ def main(args):
             samples = samples.to(device, non_blocking=True)
 
             with torch.cuda.amp.autocast():
-                loss, pred, mask = model(samples, mask_ratio=args.mask_ratio)
+                loss, pred, mask = model(samples)
 
             loss_value = loss.item()
 
