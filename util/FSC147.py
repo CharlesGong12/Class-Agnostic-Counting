@@ -43,7 +43,7 @@ class ResizeSomeImage(object):
 class ResizePreTrainImage(ResizeSomeImage):
     """
     Resize the image so that:
-        1. Image is equal to 384 * 384
+        1. Image is equal to 384 * 384 (for clip, it should be 224)
         2. The new height and new width are divisible by 16
         3. The aspect ratio is preserved
     Density and boxes correctness not preserved(crop and horizontal flip)
@@ -57,7 +57,7 @@ class ResizePreTrainImage(ResizeSomeImage):
         image, lines_boxes, density = sample['image'], sample['lines_boxes'], sample['gt_density']
 
         W, H = image.size
-        new_H=new_W=224
+        new_H=new_W=384
         # new_H = 16 * int(H / 16)
         # new_W = 16 * int(W / 16)
         '''scale_factor = float(256)/ H
@@ -292,7 +292,7 @@ class ResizeTrainImage(ResizeSomeImage):
 
 
 PreTrainNormalize = transforms.Compose([
-    transforms.RandomResizedCrop(224, scale=(0.2, 1.0), interpolation=3),
+    transforms.RandomResizedCrop(384, scale=(0.2, 1.0), interpolation=3),
     transforms.RandomHorizontalFlip(),
     transforms.ToTensor(),
     # transforms.Normalize(mean=IM_NORM_MEAN, std=IM_NORM_STD)
