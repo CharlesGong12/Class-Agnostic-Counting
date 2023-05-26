@@ -14,14 +14,13 @@ import open_clip
 import imgaug.augmenters as iaa
 from imgaug.augmentables import Keypoint, KeypointsOnImage
 
-MAX_HW = 224
+MAX_HW = 384
 IM_NORM_MEAN = [0.485, 0.456, 0.406]
 IM_NORM_STD = [0.229, 0.224, 0.225]
 OPENAI_DATASET_MEAN = (0.48145466, 0.4578275, 0.40821073)
 OPENAI_DATASET_STD = (0.26862954, 0.26130258, 0.27577711)
 
 tokenizer = open_clip.get_tokenizer('ViT-B-32')
-clip_enc, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 
 class ResizeSomeImage(object):
     def __init__(self, data_path=Path('./data/FSC147/')):
@@ -93,7 +92,7 @@ class ResizeTrainImage(ResizeSomeImage):
     Augmentation including Gaussian noise, Color jitter, Gaussian blur, Random affine, Random horizontal flip and Mosaic (or Random Crop if no Mosaic) is used.
     """
 
-    def __init__(self, data_path=Path('./data/FSC147/'), MAX_HW=224):
+    def __init__(self, data_path=Path('./data/FSC147/'), MAX_HW=384):
         super().__init__(data_path)
         self.max_hw = MAX_HW
 
@@ -120,7 +119,7 @@ class ResizeTrainImage(ResizeSomeImage):
                 mosaic_flag = 1
 
         # Gaussian noise
-        resized_image = preprocess(resized_image)
+        resized_image = TTensor(resized_image)
         if aug_flag == 1:
             noise = np.random.normal(0, 0.1, resized_image.size())
             noise = torch.from_numpy(noise)
@@ -174,9 +173,9 @@ class ResizeTrainImage(ResizeSomeImage):
                 resized_density[min(new_H - 1, int(dots[i][1]))][min(new_W - 1, int(dots[i][0] * scale_factor))] = 1
             resized_density = torch.from_numpy(resized_density)
 
-        start = random.randint(0, new_W - 224)
-        reresized_image = TF.crop(re_image, 0, start, 224, 224)
-        reresized_density = resized_density[:, start:start + 224]
+        start = random.randint(0, new_W - 384)
+        reresized_image = TF.crop(re_image, 0, start, 384, 384)
+        reresized_density = resized_density[:, start:start + 384]
 
         # Gaussian distribution density map
         reresized_density = ndimage.gaussian_filter(reresized_density.numpy(), sigma=(1, 1), order=0)
@@ -185,7 +184,7 @@ class ResizeTrainImage(ResizeSomeImage):
         reresized_density = reresized_density * 60
         reresized_density = torch.from_numpy(reresized_density)
 
-        resized_image = openai_normalize(resized_image)
+        reresized_image = openai_normalize(reresized_image)
 
         # Word vector
         wv = tokenizer([self.class_dict[im_id]])
