@@ -68,7 +68,7 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='/tmp/datasets/', type=str,
+    parser.add_argument('--data_path', default='./tmp/datasets/', type=str,
                         help='dataset path')
     parser.add_argument('--anno_file', default='annotation_FSC147_384.json', type=str,
                         help='annotation json file')
@@ -324,6 +324,7 @@ def main(args):
             epoch_1000x = int(
                 (data_iter_step / len(data_loader_train) + epoch) * 1000)
 
+            # print(gt_density.shape)
             if data_iter_step % accum_iter == 0:
                 lr_sched.adjust_learning_rate(
                     optimizer, data_iter_step / len(data_loader_train) + epoch, args)
@@ -341,18 +342,15 @@ def main(args):
             # else:
             #     shot_num = random.randint(1, 3)
             shot_num = 1
-
+            #print(samples.shape, word_vectors.shape, shot_num)
             with torch.cuda.amp.autocast():
                 output = model(samples, word_vectors, shot_num)
 
             # Compute loss function
-            mask = np.random.binomial(n=1, p=0.8, size=[384, 384])
-            masks = np.tile(mask, (output.shape[0], 1))
-            masks = masks.reshape(output.shape[0], 384, 384)
-            masks = torch.from_numpy(masks).to(device)
-            loss = (output - gt_density) ** 2
-            loss = (loss * masks / (384 * 384)).sum() / output.shape[0]
 
+            #print(output.shape, gt_density.shape, masks.shape)
+            loss = (output - gt_density) ** 2
+            loss = torch.mean(loss)
             loss_value = loss.item()
 
             # Update information of MAE and RMSE

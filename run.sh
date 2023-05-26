@@ -10,7 +10,7 @@ export http_proxy=http://127.0.0.1:7777 https_proxy=http://127.0.0.1:7777
 export socks_proxy=socks5://127.0.0.1:1080
 
 # To run training
-torchrun --standalone --nnodes=1 --nproc-per-node=4 FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-6 --output_dir ./data/train/CLIP-TextOnly-NoMosiac --title CLIP-TextOnly-NoMosiac --resume FSC147.pth --blr 1e-4 --wandb CounTR
+torchrun --standalone --nnodes=1 --nproc-per-node=1 FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-6 --output_dir ./data/train/CLIP-TextOnly-NoMosiac --title CLIP-TextOnly-NoMosiac --resume FSC147.pth --blr 1e-4 --wandb CounTR
 
 torchrun --standalone --nnodes=1 --nproc-per-node=4 FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-5 --output_dir ./data/train/CLIP-Image-Text --title CLIP-Image-Text
 

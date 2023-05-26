@@ -22,8 +22,9 @@ class SupervisedMAE(nn.Module):
                  decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
         super().__init__()
-        self.decoder_embed = nn.Linear(embed_dim, decoder_embed_dim, bias=True)
 
+        self.decoder_embed = nn.Linear(512, decoder_embed_dim, bias=True)
+        # print(self.decoder_embed)
         self.shot_token = nn.Parameter(torch.zeros(512))
 
         # Exemplar encoder with CNN
@@ -79,9 +80,9 @@ class SupervisedMAE(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward_decoder(self, x, word_vectors, shot_num=3):
-        print(x.shape, self.decoder_embed)
+        #print(x.shape, self.decoder_embed)
         x = self.decoder_embed(x)
-        print(x.shape)
+        #print(x.shape)
 
         if shot_num > 0:
             y = self.clip_enc.encode_text(word_vectors.squeeze(1)).unsqueeze(1)
@@ -93,29 +94,38 @@ class SupervisedMAE(nn.Module):
         # apply Transformer blocks
         for blk in self.decoder_blocks:
             x = blk(x, y)
+            print(x.shape)
         x = self.decoder_norm(x)
         
         # Density map regression
         n, hw, c = x.shape
         h = w = int(math.sqrt(hw))
         x = x.transpose(1, 2).reshape(n, c, h, w)
-
+        #print(x.shape)
         x = F.interpolate(
                         self.decode_head0(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
+        #print(x.shape)
         x = F.interpolate(
                         self.decode_head1(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
+        #print(x.shape)
         x = F.interpolate(
                         self.decode_head2(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
+        #print(x.shape)
         x = F.interpolate(
                         self.decode_head3(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
+        #print(x.shape)
+        x=F.interpolate(x, size=(384,224), mode='bilinear', align_corners=False)
         x = x.squeeze(-3)
-
+        #print(x.shape)
         return x
 
     def forward(self, imgs, word_vectors, shot_num):
+        #print(imgs.shape, word_vectors.shape, shot_num)
         with torch.no_grad():
             latent = self.clip_enc.encode_image(imgs).unsqueeze(1)  # [N, 1, 384]
+        #print(latent.shape)
         pred = self.forward_decoder(latent, word_vectors, shot_num)  # [N, 384, 384]
+        #print(pred.shape)
         return pred
 
 
