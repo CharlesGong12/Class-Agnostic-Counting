@@ -8,10 +8,10 @@ set -e
 
 # *** reproduce pre-training and fine-tuning described in the paper ***
 
-CUDA_VISIBLE_DEVICES=0 python FSC_pretrain.py --epochs 300 --batch_size 16 --lr 5e-6 --output_dir ./data/out/pretrain --log_dir None --title CounTR-Pretrain --wandb CounTR-Pretrain
-CUDA_VISIBLE_DEVICES=0 python FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-5 --output_dir ./data/out/finetune --log_dir None --title CounTR-CLIP --resume ./data/out/pretrain/checkpoint__pretraining_299.pth
-python FSC_test_cross\(few-shot\).py --output_dir ./data/out/results_base --resume ./data/out/finetune/checkpoint__finetuning_minMAE.pth --box_bound 3
+export http_proxy=http://127.0.0.1:7777 https_proxy=http://127.0.0.1:7777
+export socks_proxy=socks5://127.0.0.1:1080
 
+torchrun --standalone --nnodes=1 --nproc-per-node=8 FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-6 --output_dir ./data/out/finetune --title CLIP-TextOnly --resume FSC147.pth --blr 1e-4 --wandb CounTR
 
 # *** reproduce pre-training and fine-tuning described in the paper, using the large MAE model ***
 

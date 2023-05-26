@@ -9,6 +9,7 @@ import cv2
 import torchvision.transforms.functional as TF
 import scipy.ndimage as ndimage
 from PIL import Image
+import open_clip
 
 import imgaug.augmenters as iaa
 from imgaug.augmentables import Keypoint, KeypointsOnImage
@@ -17,6 +18,7 @@ MAX_HW = 384
 IM_NORM_MEAN = [0.485, 0.456, 0.406]
 IM_NORM_STD = [0.229, 0.224, 0.225]
 
+tokenizer = open_clip.get_tokenizer('ViT-B-32')
 
 class ResizeSomeImage(object):
     def __init__(self, data_path=Path('./data/FSC147/')):
@@ -35,7 +37,7 @@ class ResizeSomeImage(object):
         with open(class_file) as f:
             for line in f:
                 key = line.split()[0]
-                val = line.split()[1:]
+                val = ' '.join(line.split()[1:])
                 self.class_dict[key] = val
         self.train_set = data_split['train']
 
@@ -54,7 +56,7 @@ class ResizePreTrainImage(ResizeSomeImage):
         self.max_hw = MAX_HW
 
     def __call__(self, sample):
-        image, lines_boxes, density = sample['image'], sample['lines_boxes'], sample['gt_density']
+        image, density = sample['image'], sample['gt_density']
 
         W, H = image.size
 
@@ -71,13 +73,6 @@ class ResizePreTrainImage(ResizeSomeImage):
         if new_count > 0:
             resized_density = resized_density * (orig_count / new_count)
 
-        boxes = list()
-        for box in lines_boxes:
-            box2 = [int(k) for k in box]
-            y1, x1, y2, x2 = box2[0], box2[1], box2[2], box2[3]
-            boxes.append([0, y1, x1, y2, x2])
-
-        boxes = torch.Tensor(boxes).unsqueeze(0)
         resized_image = PreTrainNormalize(resized_image)
         resized_density = torch.from_numpy(resized_density).unsqueeze(0).unsqueeze(0)
         sample = {'image': resized_image, 'boxes': boxes, 'gt_density': resized_density}
@@ -100,7 +95,7 @@ class ResizeTrainImage(ResizeSomeImage):
         self.max_hw = MAX_HW
 
     def __call__(self, sample):
-        image, lines_boxes, density, dots, im_id, m_flag = sample['image'], sample['lines_boxes'], sample['gt_density'], \
+        image, density, dots, im_id, m_flag = sample['image'], sample['gt_density'], \
             sample['dots'], sample['id'], sample['m_flag']
 
         W, H = image.size
@@ -270,23 +265,11 @@ class ResizeTrainImage(ResizeSomeImage):
         reresized_density = reresized_density * 60
         reresized_density = torch.from_numpy(reresized_density)
 
-        # Crop bboxes and resize as 64x64
-        boxes = list()
-        cnt = 0
-        for box in lines_boxes:
-            cnt += 1
-            if cnt > 3:
-                break
-            box2 = [int(k) for k in box]
-            y1, x1, y2, x2 = box2[0], int(box2[1] * scale_factor), box2[2], int(box2[3] * scale_factor)
-            bbox = resized_image[:, y1:y2 + 1, x1:x2 + 1]
-            bbox = transforms.Resize((64, 64))(bbox)
-            boxes.append(bbox.numpy())
-        boxes = np.array(boxes)
-        boxes = torch.Tensor(boxes)
+        # Word vector
+        wv = tokenizer([self.class_dict[im_id]])
 
         # boxes shape [3,3,64,64], image shape [3,384,384], density shape[384,384]
-        sample = {'image': reresized_image, 'boxes': boxes, 'gt_density': reresized_density, 'm_flag': m_flag}
+        sample = {'image': reresized_image, 'word_vector': wv, 'class_name': self.class_dict[im_id], 'gt_density': reresized_density, 'm_flag': m_flag}
 
         return sample
 

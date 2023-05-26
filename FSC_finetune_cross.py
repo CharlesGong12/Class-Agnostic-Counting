@@ -6,6 +6,7 @@ import os
 import time
 import random
 from pathlib import Path
+from PIL import Image, ImageDraw, ImageFont
 import math
 import sys
 from PIL import Image
@@ -24,7 +25,15 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 import util.lr_sched as lr_sched
 from util.FSC147 import transform_train
 import models_mae_cross
+import open_clip
+from torchvision import transforms
+import scipy.ndimage as ndimage
+import torch.nn as nn
 
+import warnings
+
+warnings.filterwarnings('ignore')
+font = ImageFont.truetype("Helvetica.ttc", 32)
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
@@ -96,10 +105,10 @@ def get_args_parser():
                         help='url used to set up distributed training')
 
     # Logging parameters
-    parser.add_argument('--log_dir', default='./logs/fim6_dir',
+    parser.add_argument('--log_dir', default=None, type=str,
                         help='path where to tensorboard log')
-    parser.add_argument("--title", default="CounTR_finetuning", type=str)
-    parser.add_argument("--wandb", default="counting", type=str)
+    parser.add_argument("--title", default="CounTR-CLIP", type=str)
+    parser.add_argument("--wandb", default=None, type=str)
     parser.add_argument("--team", default="fdudip", type=str)
     parser.add_argument("--wandb_id", default=None, type=str)
 
@@ -108,6 +117,7 @@ def get_args_parser():
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
 
+tokenizer = open_clip.get_tokenizer('ViT-B-32')
 
 class TrainData(Dataset):
     def __init__(self):
@@ -122,15 +132,6 @@ class TrainData(Dataset):
     def __getitem__(self, idx):
         im_id = self.img[idx]
         anno = annotations[im_id]
-        bboxes = anno['box_examples_coordinates']
-
-        rects = list()
-        for bbox in bboxes:
-            x1 = bbox[0][0]
-            y1 = bbox[0][1]
-            x2 = bbox[2][0]
-            y2 = bbox[2][1]
-            rects.append([y1, x1, y2, x2])
 
         dots = np.array(anno['points'])
 
@@ -140,11 +141,53 @@ class TrainData(Dataset):
         density = np.load(density_path).astype('float32')
         m_flag = 0
 
-        sample = {'image': image, 'lines_boxes': rects, 'gt_density': density, 'dots': dots, 'id': im_id,
-                  'm_flag': m_flag}
+        sample = {'image': image, 'gt_density': density, 'dots': dots, 'id': im_id,
+                  'm_flag': m_flag, 'class_name': class_dict[im_id]}
         sample = self.TransformTrain(sample)
-        return sample['image'], sample['gt_density'], sample['boxes'], sample['m_flag']
+        return sample['image'], sample['gt_density'], sample['word_vector'], sample['m_flag'], sample['class_name']
+    
 
+class TestData(Dataset):
+    def __init__(self, ):
+        self.img = data_split['val']
+        self.img_dir = im_dir
+
+    def __len__(self):
+        return len(self.img)
+
+    def __getitem__(self, idx):
+        im_id = self.img[idx]
+        anno = annotations[im_id]
+        dots = np.array(anno['points'])
+
+        image = Image.open('{}/{}'.format(im_dir, im_id))
+        image.load()
+        W, H = image.size
+
+        new_H = 384
+        new_W = 16 * int((W / H * 384) / 16)
+        scale_factor_W = float(new_W) / W
+        scale_factor_H = float(new_H) / H
+        image = transforms.Resize((new_H, new_W))(image)
+        Normalize = transforms.Compose([transforms.ToTensor()])
+        image = Normalize(image)
+
+        # Only for visualisation purpose, no need for ground truth density map indeed.
+        gt_map = np.zeros((image.shape[1], image.shape[2]), dtype='float32')
+        for i in range(dots.shape[0]):
+            gt_map[min(new_H - 1, int(dots[i][1] * scale_factor_H))][min(new_W - 1, int(dots[i][0] * scale_factor_W))] = 1
+        gt_map = ndimage.gaussian_filter(gt_map, sigma=(1, 1), order=0)
+        gt_map = torch.from_numpy(gt_map)
+        gt_map = gt_map * 60
+
+        wv = tokenizer([class_dict[im_id]])
+
+        sample = {'image': image, 'dots': dots, 'class_name': class_dict[im_id], 'word_vector': wv, 'gt_map': gt_map, 'name': im_id}
+        return sample['image'], sample['dots'], sample['class_name'], sample['word_vector'], sample['gt_map'], sample['name']
+
+
+wandb_run = None
+log_writer = None
 
 def main(args):
     misc.init_distributed_mode(args)
@@ -162,7 +205,7 @@ def main(args):
     cudnn.benchmark = True
 
     dataset_train = TrainData()
-    print(dataset_train)
+    dataset_test = TestData()
 
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
@@ -170,7 +213,9 @@ def main(args):
         sampler_train = torch.utils.data.DistributedSampler(
             dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
         )
-        print("Sampler_train = %s" % str(sampler_train))
+        sampler_test = torch.utils.data.DistributedSampler(
+            dataset_test, num_replicas=num_tasks, rank=global_rank, shuffle=True
+        )
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
 
@@ -196,6 +241,14 @@ def main(args):
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
         batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_mem,
+        drop_last=False,
+    )
+
+    data_loader_test = torch.utils.data.DataLoader(
+        dataset_test, sampler=sampler_test,
+        batch_size=1,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=False,
@@ -262,10 +315,10 @@ def main(args):
 
         optimizer.zero_grad()
 
-        if log_writer is not None:
-            print('log_dir: {}'.format(log_writer.log_dir))
-
-        for data_iter_step, (samples, gt_density, boxes, m_flag) in enumerate(
+        # if log_writer is not None:
+        #     print('log_dir: {}'.format(log_writer.log_dir))
+        model.train()
+        for data_iter_step, (samples, gt_density, word_vectors, m_flag, class_name) in enumerate(
                 metric_logger.log_every(data_loader_train, print_freq, header)):
             epoch_1000x = int(
                 (data_iter_step / len(data_loader_train) + epoch) * 1000)
@@ -276,19 +329,20 @@ def main(args):
 
             samples = samples.to(device, non_blocking=True).half()
             gt_density = gt_density.to(device, non_blocking=True).half()
-            boxes = boxes.to(device, non_blocking=True).half()
+            word_vectors = word_vectors.to(device, non_blocking=True)
 
-            # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
-            flag = 0
-            for i in range(m_flag.shape[0]):
-                flag += m_flag[i].item()
-            if flag == 0:
-                shot_num = random.randint(0, 3)
-            else:
-                shot_num = random.randint(1, 3)
+            # # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
+            # flag = 0
+            # for i in range(m_flag.shape[0]):
+            #     flag += m_flag[i].item()
+            # if flag == 0:
+            #     shot_num = random.randint(0, 3)
+            # else:
+            #     shot_num = random.randint(1, 3)
+            shot_num = 1
 
             with torch.cuda.amp.autocast():
-                output = model(samples, boxes, shot_num)
+                output = model(samples, word_vectors, shot_num)
 
             # Compute loss function
             mask = np.random.binomial(n=1, p=0.8, size=[384, 384])
@@ -317,43 +371,41 @@ def main(args):
             train_rmse += batch_rmse
 
             # Output visualisation information to tensorboard
-            if data_iter_step == 0:
-                if log_writer is not None:
-                    fig = output[0].unsqueeze(0).repeat(3, 1, 1)
-                    f1 = gt_density[0].unsqueeze(0).repeat(3, 1, 1)
+            if data_iter_step == 0 and misc.is_main_process():
+                # if log_writer is not None:
+                #     fig = output[0].unsqueeze(0).repeat(3, 1, 1)
+                #     f1 = gt_density[0].unsqueeze(0).repeat(3, 1, 1)
 
-                    log_writer.add_images(
-                        'bboxes', (boxes[0]), int(epoch), dataformats='NCHW')
-                    log_writer.add_images(
-                        'gt_density', (samples[0] / 2 + f1 / 10), int(epoch), dataformats='CHW')
-                    log_writer.add_images(
-                        'density map', (fig / 20), int(epoch), dataformats='CHW')
-                    log_writer.add_images(
-                        'density map overlay', (samples[0] / 2 + fig / 10), int(epoch), dataformats='CHW')
+                #     log_writer.add_images(
+                #         'bboxes', (word_vectors[0]), int(epoch), dataformats='NCHW')
+                #     log_writer.add_images(
+                #         'gt_density', (samples[0] / 2 + f1 / 10), int(epoch), dataformats='CHW')
+                #     log_writer.add_images(
+                #         'density map', (fig / 20), int(epoch), dataformats='CHW')
+                #     log_writer.add_images(
+                #         'density map overlay', (samples[0] / 2 + fig / 10), int(epoch), dataformats='CHW')
 
                 if wandb_run is not None:
-                    wandb_bboxes = []
                     wandb_densities = []
 
-                    for i in range(boxes.shape[0]):
+                    for i in range(word_vectors.shape[0]):
                         fig = output[i].unsqueeze(0).repeat(3, 1, 1)
                         f1 = gt_density[i].unsqueeze(0).repeat(3, 1, 1)
+                        _, h, w = samples[i].shape
                         w_gt_density = samples[i] / 2 + f1 / 5
                         w_d_map = fig / 10
                         w_d_map_overlay = samples[i] / 2 + fig / 5
-                        w_boxes = torch.cat([boxes[i][x, :, :, :]
-                                            for x in range(boxes[i].shape[0])], 2)
+                        # pred_img = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
+                        # draw = ImageDraw.Draw(pred_img)
+                        # draw.text((50, h-50), str(''.join(class_name[i])), (215, 123, 175), font=font)
+                        # w_d_map += torch.tensor(np.array(pred_img), device=w_d_map.device)
                         w_densities = torch.cat(
                             [w_gt_density, w_d_map, w_d_map_overlay], dim=2)
                         w_densities = misc.min_max(w_densities)
-                        wandb_bboxes += [wandb.Image(
-                            torchvision.transforms.ToPILImage()(w_boxes))]
                         wandb_densities += [wandb.Image(
                             torchvision.transforms.ToPILImage()(w_densities))]
-
-                    wandb.log({f"Bounding boxes": wandb_bboxes},
-                              step=epoch_1000x, commit=False)
-                    wandb.log({f"Density predictions": wandb_densities},
+                        
+                    wandb.log({f"Density Predictions": wandb_densities},
                               step=epoch_1000x, commit=False)
 
             if not math.isfinite(loss_value):
@@ -374,22 +426,22 @@ def main(args):
             metric_logger.update(lr=lr)
 
             loss_value_reduce = misc.all_reduce_mean(loss_value)
-            if (data_iter_step + 1) % accum_iter == 0:
-                if log_writer is not None:
-                    """ We use epoch_1000x as the x-axis in tensorboard.
-                    This calibrates different curves when batch size changes.
-                    """
-                    log_writer.add_scalar(
-                        'train_loss', loss_value_reduce, epoch_1000x)
-                    log_writer.add_scalar('lr', lr, epoch_1000x)
-                    log_writer.add_scalar(
-                        'MAE', batch_mae / args.batch_size, epoch_1000x)
-                    log_writer.add_scalar(
-                        'RMSE', (batch_rmse / args.batch_size) ** 0.5, epoch_1000x)
+            if (data_iter_step + 1) % accum_iter == 0 and misc.is_main_process():
+                # if log_writer is not None:
+                #     """ We use epoch_1000x as the x-axis in tensorboard.
+                #     This calibrates different curves when batch size changes.
+                #     """
+                #     log_writer.add_scalar(
+                #         'train_loss', loss_value_reduce, epoch_1000x)
+                #     log_writer.add_scalar('lr', lr, epoch_1000x)
+                #     log_writer.add_scalar(
+                #         'MAE', batch_mae / args.batch_size, epoch_1000x)
+                #     log_writer.add_scalar(
+                #         'RMSE', (batch_rmse / args.batch_size) ** 0.5, epoch_1000x)
                 if wandb_run is not None:
-                    log = {"train/loss": loss_value_reduce, "train/lr": lr,
-                           "train/MAE": batch_mae / args.batch_size,
-                           "train/RMSE": (batch_rmse / args.batch_size) ** 0.5}
+                    log = {"Train/Loss": loss_value_reduce, "Train/LR": lr,
+                           "Train/MAE": batch_mae / args.batch_size,
+                           "Train/RMSE": (batch_rmse / args.batch_size) ** 0.5}
                     wandb.log(log, step=epoch_1000x,
                               commit=True if data_iter_step == 0 else False)
 
@@ -398,14 +450,72 @@ def main(args):
         print("Averaged stats:", metric_logger)
         train_stats = {k: meter.global_avg for k,
                        meter in metric_logger.meters.items()}
+        
+        # Begin Validation
+        val_mae = 0
+        val_rmse = 0
+        model.eval()
+        val_metric_logger = misc.MetricLogger(delimiter="  ")
+        for data_iter_step, (samples, gt_dots, class_name, wv, gt_map, im_name) in \
+            enumerate(val_metric_logger.log_every(data_loader_test, print_freq, header)):
+            im_name = Path(im_name[0])
+            samples = samples.to(device, non_blocking=True)
+            gt_dots = gt_dots.to(device, non_blocking=True).half()
+            _, _, h, w = samples.shape
+
+            wv = wv.to(device, non_blocking=True)
+
+            density_map = torch.zeros([h, w])
+            density_map = density_map.to(device, non_blocking=True)
+            start = 0
+            prev = -1
+            with torch.no_grad():
+                while start + 383 < w:
+                    output, = model(samples[:, :, :, start:start + 384], wv, 1)
+                    output = output.squeeze(0)
+                    b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
+                    d1 = b1(output[:, 0:prev - start + 1])
+                    b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
+                    d2 = b2(output[:, prev - start + 1:384])
+
+                    b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
+                    density_map_l = b3(density_map[:, 0:start])
+                    density_map_m = b1(density_map[:, start:prev + 1])
+                    b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
+                    density_map_r = b4(density_map[:, prev + 1:w])
+
+                    density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
+
+                    prev = start + 383
+                    start = start + 128
+                    if start + 383 >= w:
+                        if start == w - 384 + 128:
+                            break
+                        else:
+                            start = w - 384
+
+            pred_cnt = torch.sum(density_map / 60).item()
+
+            gt_cnt = gt_dots.shape[1]
+            cnt_err = abs(pred_cnt - gt_cnt)
+            val_mae += cnt_err
+            val_rmse += cnt_err ** 2
+
+        val_metric_logger.synchronize_between_processes()
+
+        if misc.is_main_process():
+            if wandb_run is not None:
+                log = {"Val/MAE": val_mae / len(data_loader_test),
+                        "Val/RMSE": (val_rmse / len(data_loader_test)) ** 0.5}
+                wandb.log(log, step=epoch_1000x)
 
         # save train status and model
-        if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs):
+        if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs) and misc.is_main_process():
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch, suffix=f"finetuning_{epoch}")
-        if args.output_dir and train_mae / (len(data_loader_train) * args.batch_size) < min_MAE:
-            min_MAE = train_mae / (len(data_loader_train) * args.batch_size)
+        if args.output_dir and val_mae / (len(data_loader_test) * args.batch_size) < min_MAE:
+            min_MAE = val_mae / (len(data_loader_test) * args.batch_size)
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch, suffix="finetuning_minMAE")
@@ -414,14 +524,15 @@ def main(args):
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                      'Current MAE': train_mae / (len(data_loader_train) * args.batch_size),
                      'RMSE': (train_rmse / (len(data_loader_train) * args.batch_size)) ** 0.5,
-                     'epoch': epoch, }
+                     'epoch': epoch, 'Val MAE': val_mae / len(data_loader_test), "Val/RMSE": (val_rmse / len(data_loader_test)) ** 0.5}
 
         print('Current MAE: {:5.2f}, RMSE: {:5.2f} '.format(train_mae / (len(data_loader_train) * args.batch_size), (
             train_rmse / (len(data_loader_train) * args.batch_size)) ** 0.5))
+        print('Val MAE', val_mae / len(data_loader_test))
 
         if args.output_dir and misc.is_main_process():
-            if log_writer is not None:
-                log_writer.flush()
+            # if log_writer is not None:
+            #     log_writer.flush()
             with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
                 f.write(json.dumps(log_stats) + "\n")
 
@@ -450,7 +561,7 @@ if __name__ == '__main__':
     with open(class_file) as f:
         for line in f:
             key = line.split()[0]
-            val = line.split()[1:]
+            val = ' '.join(line.split()[1:])
             class_dict[key] = val
 
     if args.output_dir:

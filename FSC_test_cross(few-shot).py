@@ -20,6 +20,7 @@ import torchvision.transforms.functional as TF
 
 import util.misc as misc
 import models_mae_cross
+import open_clip
 
 
 def get_args_parser():
@@ -100,51 +101,12 @@ def get_args_parser():
 
 os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
 
+tokenizer = open_clip.get_tokenizer('ViT-B-32')
 
 class TestData(Dataset):
-    def __init__(self, external: bool, box_bound: int = -1):
-
+    def __init__(self, ):
         self.img = data_split['test']
         self.img_dir = im_dir
-        self.external = external
-        self.box_bound = box_bound
-
-        if external:
-            self.external_boxes = []
-            for anno in annotations:
-                rects = []
-                bboxes = annotations[anno]['box_examples_coordinates']
-
-                if bboxes:
-                    image = Image.open('{}/{}'.format(im_dir, anno))
-                    image.load()
-                    W, H = image.size
-
-                    new_H = 384
-                    new_W = 16 * int((W / H * 384) / 16)
-                    scale_factor_W = float(new_W) / W
-                    scale_factor_H = float(new_H) / H
-                    image = transforms.Resize((new_H, new_W))(image)
-                    Normalize = transforms.Compose([transforms.ToTensor()])
-                    image = Normalize(image)
-
-                    for bbox in bboxes:
-                        x1 = int(bbox[0][0] * scale_factor_W)
-                        y1 = int(bbox[0][1] * scale_factor_H)
-                        x2 = int(bbox[2][0] * scale_factor_W)
-                        y2 = int(bbox[2][1] * scale_factor_H)
-                        rects.append([y1, x1, y2, x2])
-
-                    for box in rects:
-                        box2 = [int(k) for k in box]
-                        y1, x1, y2, x2 = box2[0], box2[1], box2[2], box2[3]
-                        bbox = image[:, y1:y2 + 1, x1:x2 + 1]
-                        bbox = transforms.Resize((64, 64))(bbox)
-                        self.external_boxes.append(bbox.numpy())
-
-            self.external_boxes = np.array(self.external_boxes if self.box_bound < 0 else
-                                           self.external_boxes[:self.box_bound])
-            self.external_boxes = torch.Tensor(self.external_boxes)
 
     def __len__(self):
         return len(self.img)
@@ -152,8 +114,6 @@ class TestData(Dataset):
     def __getitem__(self, idx):
         im_id = self.img[idx]
         anno = annotations[im_id]
-        bboxes = anno['box_examples_coordinates'] if self.box_bound < 0 else \
-            anno['box_examples_coordinates'][:self.box_bound]
         dots = np.array(anno['points'])
 
         image = Image.open('{}/{}'.format(im_dir, im_id))
@@ -168,31 +128,6 @@ class TestData(Dataset):
         Normalize = transforms.Compose([transforms.ToTensor()])
         image = Normalize(image)
 
-        boxes = list()
-        if self.external:
-            boxes = self.external_boxes
-        else:
-            rects = list()
-            for bbox in bboxes:
-                x1 = int(bbox[0][0] * scale_factor_W)
-                y1 = int(bbox[0][1] * scale_factor_H)
-                x2 = int(bbox[2][0] * scale_factor_W)
-                y2 = int(bbox[2][1] * scale_factor_H)
-                rects.append([y1, x1, y2, x2])
-
-            for box in rects:
-                box2 = [int(k) for k in box]
-                y1, x1, y2, x2 = box2[0], box2[1], box2[2], box2[3]
-                bbox = image[:, y1:y2 + 1, x1:x2 + 1]
-                bbox = transforms.Resize((64, 64))(bbox)
-                boxes.append(bbox.numpy())
-
-            boxes = np.array(boxes)
-            boxes = torch.Tensor(boxes)
-
-        if self.box_bound >= 0:
-            assert len(boxes) <= self.box_bound
-
         # Only for visualisation purpose, no need for ground truth density map indeed.
         gt_map = np.zeros((image.shape[1], image.shape[2]), dtype='float32')
         for i in range(dots.shape[0]):
@@ -201,8 +136,10 @@ class TestData(Dataset):
         gt_map = torch.from_numpy(gt_map)
         gt_map = gt_map * 60
 
-        sample = {'image': image, 'dots': dots, 'boxes': boxes, 'pos': rects if self.external is False else [], 'gt_map': gt_map, 'name': im_id}
-        return sample['image'], sample['dots'], sample['boxes'], sample['pos'], sample['gt_map'], sample['name']
+        wv = tokenizer([class_dict[im_id]])
+
+        sample = {'image': image, 'dots': dots, 'class_name': class_dict[im_id], 'word_vector': wv, 'gt_map': gt_map, 'name': im_id}
+        return sample['image'], sample['dots'], sample['class_name'], sample['word_vector'], sample['gt_map'], sample['name']
 
 
 def main(args):
@@ -221,7 +158,7 @@ def main(args):
 
     cudnn.benchmark = True
 
-    dataset_test = TestData(args.external, args.box_bound)
+    dataset_test = TestData()
     print(dataset_test)
 
     if True:  # args.distributed:
@@ -278,152 +215,68 @@ def main(args):
 
     err_sort = []
 
-    for data_iter_step, (samples, gt_dots, boxes, pos, gt_map, im_name) in \
+    for data_iter_step, (samples, gt_dots, class_name, wv, gt_map, im_name) in \
             enumerate(metric_logger.log_every(data_loader_test, print_freq, header)):
 
         im_name = Path(im_name[0])
         samples = samples.to(device, non_blocking=True)
         gt_dots = gt_dots.to(device, non_blocking=True).half()
-        boxes = boxes.to(device, non_blocking=True)
-        num_boxes = boxes.shape[1] if boxes.nelement() > 0 else 0
         _, _, h, w = samples.shape
 
-        r_cnt = 0
-        s_cnt = 0
-        for rect in pos:
-            r_cnt += 1
-            if r_cnt > 3:
-                break
-            if rect[2] - rect[0] < 10 and rect[3] - rect[1] < 10:
-                s_cnt += 1
+        wv = wv.to(device, non_blocking=True)
 
-        if s_cnt >= 1:
-            r_images = []
-            r_densities = []
-            r_images.append(TF.crop(samples[0], 0, 0, int(h / 3), int(w / 3)))
-            r_images.append(TF.crop(samples[0], int(h / 3), 0, int(h / 3), int(w / 3)))
-            r_images.append(TF.crop(samples[0], 0, int(w / 3), int(h / 3), int(w / 3)))
-            r_images.append(TF.crop(samples[0], int(h / 3), int(w / 3), int(h / 3), int(w / 3)))
-            r_images.append(TF.crop(samples[0], int(h * 2 / 3), 0, int(h / 3), int(w / 3)))
-            r_images.append(TF.crop(samples[0], int(h * 2 / 3), int(w / 3), int(h / 3), int(w / 3)))
-            r_images.append(TF.crop(samples[0], 0, int(w * 2 / 3), int(h / 3), int(w / 3)))
-            r_images.append(TF.crop(samples[0], int(h / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
-            r_images.append(TF.crop(samples[0], int(h * 2 / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
+        density_map = torch.zeros([h, w])
+        density_map = density_map.to(device, non_blocking=True)
+        start = 0
+        prev = -1
+        with torch.no_grad():
+            while start + 383 < w:
+                output, = model(samples[:, :, :, start:start + 384], wv, 1)
+                output = output.squeeze(0)
+                b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
+                d1 = b1(output[:, 0:prev - start + 1])
+                b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
+                d2 = b2(output[:, prev - start + 1:384])
 
-            pred_cnt = 0
-            for r_image in r_images:
-                r_image = transforms.Resize((h, w))(r_image).unsqueeze(0)
-                density_map = torch.zeros([h, w])
-                density_map = density_map.to(device, non_blocking=True)
-                start = 0
-                prev = -1
+                b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
+                density_map_l = b3(density_map[:, 0:start])
+                density_map_m = b1(density_map[:, start:prev + 1])
+                b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
+                density_map_r = b4(density_map[:, prev + 1:w])
 
-                with torch.no_grad():
-                    while start + 383 < w:
-                        output, = model(r_image[:, :, :, start:start + 384], boxes, num_boxes)
-                        output = output.squeeze(0)
-                        b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
-                        d1 = b1(output[:, 0:prev - start + 1])
-                        b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
-                        d2 = b2(output[:, prev - start + 1:384])
+                density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
 
-                        b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
-                        density_map_l = b3(density_map[:, 0:start])
-                        density_map_m = b1(density_map[:, start:prev + 1])
-                        b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
-                        density_map_r = b4(density_map[:, prev + 1:w])
+                prev = start + 383
+                start = start + 128
+                if start + 383 >= w:
+                    if start == w - 384 + 128:
+                        break
+                    else:
+                        start = w - 384
 
-                        density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
-
-                        prev = start + 383
-                        start = start + 128
-                        if start + 383 >= w:
-                            if start == w - 384 + 128:
-                                break
-                            else:
-                                start = w - 384
-
-                pred_cnt += torch.sum(density_map / 60).item()
-                r_densities += [density_map]
-        else:
-            density_map = torch.zeros([h, w])
-            density_map = density_map.to(device, non_blocking=True)
-            start = 0
-            prev = -1
-            with torch.no_grad():
-                while start + 383 < w:
-                    output, = model(samples[:, :, :, start:start + 384], boxes, num_boxes)
-                    output = output.squeeze(0)
-                    b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
-                    d1 = b1(output[:, 0:prev - start + 1])
-                    b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
-                    d2 = b2(output[:, prev - start + 1:384])
-
-                    b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
-                    density_map_l = b3(density_map[:, 0:start])
-                    density_map_m = b1(density_map[:, start:prev + 1])
-                    b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
-                    density_map_r = b4(density_map[:, prev + 1:w])
-
-                    density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
-
-                    prev = start + 383
-                    start = start + 128
-                    if start + 383 >= w:
-                        if start == w - 384 + 128:
-                            break
-                        else:
-                            start = w - 384
-
-            pred_cnt = torch.sum(density_map / 60).item()
-
-        if args.normalization:
-            e_cnt = 0
-            for rect in pos:
-                e_cnt += torch.sum(density_map[rect[0]:rect[2] + 1, rect[1]:rect[3] + 1] / 60).item()
-            e_cnt = e_cnt / 3
-            if e_cnt > 1.8:
-                pred_cnt /= e_cnt
+        pred_cnt = torch.sum(density_map / 60).item()
 
         gt_cnt = gt_dots.shape[1]
         cnt_err = abs(pred_cnt - gt_cnt)
         train_mae += cnt_err
         train_rmse += cnt_err ** 2
 
-        print(f'{data_iter_step}/{len(data_loader_test)}: pred_cnt: {pred_cnt},  gt_cnt: {gt_cnt},  error: {cnt_err},  AE: {cnt_err},  SE: {cnt_err ** 2}, id: {im_name.name}, s_cnt: {s_cnt >= 1}')
+        print(f'{data_iter_step}/{len(data_loader_test)}: pred_cnt: {pred_cnt},  gt_cnt: {gt_cnt},  error: {cnt_err},  AE: {cnt_err},  SE: {cnt_err ** 2}, id: {im_name.name}')
 
         loss_array.append(cnt_err)
         gt_array.append(gt_cnt)
         pred_arr.append(round(pred_cnt))
         name_arr.append(im_name.name)
 
-        # compute and save images
-        fig = samples[0]
-        box_map = torch.zeros([fig.shape[1], fig.shape[2]], device=device)
-        if args.external is False:
-            for rect in pos:
-                for i in range(rect[2] - rect[0]):
-                    box_map[min(rect[0] + i, fig.shape[1] - 1), min(rect[1], fig.shape[2] - 1)] = 10
-                    box_map[min(rect[0] + i, fig.shape[1] - 1), min(rect[3], fig.shape[2] - 1)] = 10
-                for i in range(rect[3] - rect[1]):
-                    box_map[min(rect[0], fig.shape[1] - 1), min(rect[1] + i, fig.shape[2] - 1)] = 10
-                    box_map[min(rect[2], fig.shape[1] - 1), min(rect[1] + i, fig.shape[2] - 1)] = 10
-            box_map = box_map.unsqueeze(0).repeat(3, 1, 1)
-        pred = density_map.unsqueeze(0) if s_cnt < 1 else misc.make_grid(r_densities, h, w).unsqueeze(0)
-        pred = torch.cat((pred, torch.zeros_like(pred), torch.zeros_like(pred))) * 5
-        drawed = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
-        draw = ImageDraw.Draw(drawed)
-        draw.text((w-120, h-50), str(round(gt_cnt)), (215, 123, 175), font=font)
-        drawed = np.array(drawed).transpose((2, 0, 1))
-        fig = fig + pred + box_map + torch.tensor(np.array(drawed), device=device)
-        fig = torch.clamp(fig, 0, 1)
+        pred = density_map.unsqueeze(0)
 
         pred_img = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
         draw = ImageDraw.Draw(pred_img)
         draw.text((w-120, h-50), str(round(pred_cnt)), (215, 123, 175), font=font)
+        draw.text((50, h-50), str(class_name), (215, 123, 175), font=font)
         pred_img = np.array(pred_img).transpose((2, 0, 1))
         pred_img = torch.tensor(np.array(pred_img), device=device) + pred
-        full = torch.cat((samples[0], fig, pred_img), -1)
+        full = torch.cat((samples[0], pred_img), -1)
         torchvision.utils.save_image(full, (os.path.join(args.output_dir, f'full_{im_name.stem}__{round(pred_cnt)}{im_name.suffix}')))
 
         err_sort.append((cnt_err, im_name.stem))
@@ -468,6 +321,13 @@ if __name__ == '__main__':
     anno_file = data_path / args.anno_file
     data_split_file = data_path / args.data_split_file
     im_dir = data_path / args.im_dir
+    class_file = data_path / 'ImageClasses_FSC147.txt'
+    class_dict = {}
+    with open(class_file) as f:
+        for line in f:
+            key = line.split()[0]
+            val = ' '.join(line.split()[1:])
+            class_dict[key] = val
 
     with open(anno_file) as f:
         annotations = json.load(f)

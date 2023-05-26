@@ -313,12 +313,12 @@ def save_model(args, epoch, model, model_without_ddp, optimizer, loss_scaler, su
                 'args': args,
             }
             save_on_master(to_save, checkpoint_path)
-            log_wandb_model(f"checkpoint{suffix}", checkpoint_path, epoch)
+            # log_wandb_model(f"checkpoint{suffix}", checkpoint_path, epoch)
             print("checkpoint sent to W&B (if)")
     else:
         client_state = {'epoch': epoch}
         model.save_checkpoint(save_dir=args.output_dir, tag=ckpt_name, client_state=client_state)
-        log_wandb_model(f"checkpoint{suffix}", output_dir / ckpt_name, epoch)
+        # log_wandb_model(f"checkpoint{suffix}", output_dir / ckpt_name, epoch)
         print("checkpoint sent to W&B (else)")
 
 

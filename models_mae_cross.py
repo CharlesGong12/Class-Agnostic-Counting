@@ -4,6 +4,7 @@ import math
 import random
 
 import numpy as np
+import open_clip
 
 import torch
 import torch.nn as nn
@@ -44,32 +45,7 @@ class SupervisedMAE(nn.Module):
         self.shot_token = nn.Parameter(torch.zeros(512))
 
         # Exemplar encoder with CNN
-        self.decoder_proj1 = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2) #[3,64,64]->[64,32,32]
-        )
-        self.decoder_proj2 = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2) #[64,32,32]->[128,16,16]
-        )
-        self.decoder_proj3 = nn.Sequential(
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2) # [128,16,16]->[256,8,8]
-        )
-        self.decoder_proj4 = nn.Sequential(
-            nn.Conv2d(256, decoder_embed_dim, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool2d((1,1))
-            # [256,8,8]->[512,1,1]
-        )
-
+        self.clip_enc, _, _ = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
 
         self.decoder_blocks = nn.ModuleList([
             CrossAttentionBlock(decoder_embed_dim, decoder_num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
@@ -147,35 +123,21 @@ class SupervisedMAE(nn.Module):
 
         return x
 
-    def forward_decoder(self, x, y_, shot_num=3):
+    def forward_decoder(self, x, word_vectors, shot_num=3):
         # embed tokens
         x = self.decoder_embed(x)
         # add pos embed
         x = x + self.decoder_pos_embed
 
-        # Exemplar encoder
-        y_ = y_.transpose(0,1) # y_ [N,3,3,64,64]->[3,N,3,64,64]
-        y1=[]
-        C=0
-        N=0
-        cnt = 0
-        for yi in y_:
-            cnt+=1
-            if cnt > shot_num:
-                break
-            yi = self.decoder_proj1(yi)
-            yi = self.decoder_proj2(yi)
-            yi = self.decoder_proj3(yi)
-            yi = self.decoder_proj4(yi)
-            N, C,_,_ = yi.shape
-            y1.append(yi.squeeze(-1).squeeze(-1)) # yi [N,C,1,1]->[N,C]       
-            
+        # print("Word vectors", word_vectors.squeeze(1).shape)
+           
         if shot_num > 0:
-            y = torch.cat(y1,dim=0).reshape(shot_num,N,C).to(x.device)
+            y = self.clip_enc.encode_text(word_vectors.squeeze(1)).unsqueeze(1)
+            # print("Encoded", y.shape)
         else:
-            y = self.shot_token.repeat(y_.shape[1],1).unsqueeze(0).to(x.device)
-        y = y.transpose(0,1) # y [3,N,C]->[N,3,C]
-        
+            y = self.shot_token.repeat(word_vectors.shape[1],1).unsqueeze(0).to(x.device)
+            y = y.transpose(0,1) # y [3,N,C]->[N,3,C]
+        # print("Reshaped", x.shape, y.shape)
         # apply Transformer blocks
         for blk in self.decoder_blocks:
             x = blk(x, y)
@@ -198,12 +160,12 @@ class SupervisedMAE(nn.Module):
 
         return x
 
-    def forward(self, imgs, boxes, shot_num):
+    def forward(self, imgs, word_vectors, shot_num):
         # if boxes.nelement() > 0:
         #     torchvision.utils.save_image(boxes[0], f"data/out/crops/box_{time.time()}_{random.randint(0, 99999):>5}.png")
         with torch.no_grad():
             latent = self.forward_encoder(imgs)
-        pred = self.forward_decoder(latent, boxes, shot_num)  # [N, 384, 384]
+        pred = self.forward_decoder(latent, word_vectors, shot_num)  # [N, 384, 384]
         return pred
 
 
