@@ -29,6 +29,7 @@ import open_clip
 from torchvision import transforms
 import scipy.ndimage as ndimage
 import torch.nn as nn
+from util.FSC147 import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 
 import warnings
 
@@ -169,7 +170,7 @@ class TestData(Dataset):
         scale_factor_W = float(new_W) / W
         scale_factor_H = float(new_H) / H
         image = transforms.Resize((new_H, new_W))(image)
-        Normalize = transforms.Compose([transforms.ToTensor()])
+        Normalize = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=OPENAI_DATASET_MEAN, std=OPENAI_DATASET_STD)])
         image = Normalize(image)
 
         # Only for visualisation purpose, no need for ground truth density map indeed.
@@ -513,12 +514,12 @@ def main(args):
         if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs) and misc.is_main_process():
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch, suffix=f"finetuning_{epoch}")
+                loss_scaler=loss_scaler, epoch=epoch, suffix=f"_{epoch}")
         if args.output_dir and val_mae / (len(data_loader_test) * args.batch_size) < min_MAE:
             min_MAE = val_mae / (len(data_loader_test) * args.batch_size)
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch, suffix="finetuning_minMAE")
+                loss_scaler=loss_scaler, epoch=epoch, suffix="_minMAE")
 
         # Output log status
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
