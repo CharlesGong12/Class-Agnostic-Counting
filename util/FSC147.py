@@ -17,8 +17,6 @@ from imgaug.augmentables import Keypoint, KeypointsOnImage
 MAX_HW = 224
 IM_NORM_MEAN = [0.485, 0.456, 0.406]
 IM_NORM_STD = [0.229, 0.224, 0.225]
-OPENAI_DATASET_MEAN = (0.48145466, 0.4578275, 0.40821073)
-OPENAI_DATASET_STD = (0.26862954, 0.26130258, 0.27577711)
 
 tokenizer = open_clip.get_tokenizer('ViT-B-32')
 clip_enc, _, preprocess = open_clip.create_model_and_transforms('ViT-B-32', pretrained='laion2b_s34b_b79k')
@@ -186,8 +184,6 @@ class ResizeTrainImage(ResizeSomeImage):
         reresized_density = reresized_density * 60
         reresized_density = torch.from_numpy(reresized_density)
 
-        reresized_image = openai_normalize(reresized_image)
-
         # Word vector
         wv = tokenizer([self.class_dict[im_id]])
 
@@ -217,8 +213,6 @@ Normalize = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=IM_NORM_MEAN, std=IM_NORM_STD)
 ])
-
-openai_normalize = transforms.Normalize(mean=OPENAI_DATASET_MEAN, std=OPENAI_DATASET_STD)
 
 def transform_train(data_path: Path):
     return transforms.Compose([ResizeTrainImage(data_path, MAX_HW)])
