@@ -29,6 +29,7 @@ import open_clip
 from torchvision import transforms
 import scipy.ndimage as ndimage
 import torch.nn as nn
+from util.FSC147 import OPENAI_DATASET_MEAN, OPENAI_DATASET_STD
 
 import warnings
 
@@ -169,7 +170,7 @@ class TestData(Dataset):
         scale_factor_W = float(new_W) / W
         scale_factor_H = float(new_H) / H
         image = transforms.Resize((new_H, new_W))(image)
-        Normalize = transforms.Compose([transforms.ToTensor()])
+        Normalize = transforms.Compose([transforms.ToTensor(), transforms.Normalize(mean=OPENAI_DATASET_MEAN, std=OPENAI_DATASET_STD)])
         image = Normalize(image)
 
         # Only for visualisation purpose, no need for ground truth density map indeed.

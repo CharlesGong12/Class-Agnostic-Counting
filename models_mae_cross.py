@@ -18,29 +18,11 @@ from util.pos_embed import get_2d_sincos_pos_embed
 
 class SupervisedMAE(nn.Module):
     def __init__(self, img_size=384, patch_size=16, in_chans=3,
-                 embed_dim=1024, depth=24, num_heads=16,
+                 embed_dim=512, depth=24, num_heads=16,
                  decoder_embed_dim=512, decoder_depth=2, decoder_num_heads=16,
                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
         super().__init__()
-
-        # --------------------------------------------------------------------------
-        # MAE encoder specifics
-        self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim)
-        num_patches = self.patch_embed.num_patches
-
-        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim), requires_grad=False)  # fixed sin-cos embedding
-
-        self.blocks = nn.ModuleList([
-            Block(embed_dim, num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
-            for i in range(depth)])
-        self.norm = norm_layer(embed_dim)
-        # --------------------------------------------------------------------------
-
-        # --------------------------------------------------------------------------
-        # MAE decoder specifics
         self.decoder_embed = nn.Linear(embed_dim, decoder_embed_dim, bias=True)
-
-        self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
 
         self.shot_token = nn.Parameter(torch.zeros(512))
 
@@ -82,20 +64,7 @@ class SupervisedMAE(nn.Module):
         self.initialize_weights()
 
     def initialize_weights(self):
-        # initialization
-        # initialize (and freeze) pos_embed by sin-cos embedding
-        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.patch_embed.num_patches**.5), cls_token=False)
-        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
-        
-        decoder_pos_embed = get_2d_sincos_pos_embed(self.decoder_pos_embed.shape[-1], int(self.patch_embed.num_patches**.5), cls_token=False)
-        self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
-
-        # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
-        w = self.patch_embed.proj.weight.data
-        torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
-
         torch.nn.init.normal_(self.shot_token, std=.02)
-
         # initialize nn.Linear and nn.LayerNorm
         self.apply(self._init_weights)
 
@@ -109,26 +78,9 @@ class SupervisedMAE(nn.Module):
             nn.init.constant_(m.bias, 0)
             nn.init.constant_(m.weight, 1.0)
 
-    def forward_encoder(self, x):
-        # embed patches
-        x = self.patch_embed(x)
-
-        # add pos embed w/o cls token
-        x = x + self.pos_embed
-
-        # apply Transformer blocks
-        for blk in self.blocks:
-            x = blk(x)
-        x = self.norm(x)
-
-        return x
-
     def forward_decoder(self, x, word_vectors, shot_num=3):
-        # embed tokens
         x = self.decoder_embed(x)
-        # add pos embed
-        x = x + self.decoder_pos_embed
-           
+        
         if shot_num > 0:
             y = self.clip_enc.encode_text(word_vectors.squeeze(1)).unsqueeze(1)
         else:
@@ -157,10 +109,8 @@ class SupervisedMAE(nn.Module):
         return x
 
     def forward(self, imgs, word_vectors, shot_num):
-        # if boxes.nelement() > 0:
-        #     torchvision.utils.save_image(boxes[0], f"data/out/crops/box_{time.time()}_{random.randint(0, 99999):>5}.png")
         with torch.no_grad():
-            latent = self.forward_encoder(imgs)
+            latent = self.clip_enc.encode_image(imgs).unsqueeze(1)  # [N, 1, 384]
         pred = self.forward_decoder(latent, word_vectors, shot_num)  # [N, 384, 384]
         return pred
 
