@@ -165,8 +165,8 @@ class TestData(Dataset):
         image.load()
         W, H = image.size
 
-        new_H = 384
-        new_W = 16 * int((W / H * 384) / 16)
+        new_H = 224
+        new_W = 16 * int((W / H * 224) / 16)
         scale_factor_W = float(new_W) / W
         scale_factor_H = float(new_H) / H
         image = transforms.Resize((new_H, new_W))(image)
