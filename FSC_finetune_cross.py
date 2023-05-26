@@ -384,27 +384,26 @@ def main(args):
                 #         'density map', (fig / 20), int(epoch), dataformats='CHW')
                 #     log_writer.add_images(
                 #         'density map overlay', (samples[0] / 2 + fig / 10), int(epoch), dataformats='CHW')
-                wandb_densities = []
-
-                for i in range(word_vectors.shape[0]):
-                    fig = output[i].unsqueeze(0).repeat(3, 1, 1)
-                    f1 = gt_density[i].unsqueeze(0).repeat(3, 1, 1)
-                    _, h, w = samples[i].shape
-                    #print(samples[i].shape, fig.shape, f1.shape)
-                    w_gt_density = samples[i] / 2 + f1 / 5
-                    w_d_map = fig / 10
-                    w_d_map_overlay = samples[i] / 2 + fig / 5
-                    # pred_img = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
-                    # draw = ImageDraw.Draw(pred_img)
-                    # draw.text((50, h-50), str(''.join(class_name[i])), (215, 123, 175), font=font)
-                    # w_d_map += torch.tensor(np.array(pred_img), device=w_d_map.device)
-                    w_densities = torch.cat(
-                        [w_gt_density, w_d_map, w_d_map_overlay], dim=2)
-                    w_densities = misc.min_max(w_densities)
-                    wandb_densities += [wandb.Image(
-                        torchvision.transforms.ToPILImage()(w_densities))]
                 if wandb_run is not None:
-                    
+                    wandb_densities = []
+
+                    for i in range(word_vectors.shape[0]):
+                        fig = output[i].unsqueeze(0).repeat(3, 1, 1)
+                        f1 = gt_density[i].unsqueeze(0).repeat(3, 1, 1)
+                        _, h, w = samples[i].shape
+                        #print(samples[i].shape, fig.shape, f1.shape)
+                        w_gt_density = samples[i] / 2 + f1 / 5
+                        w_d_map = fig / 10
+                        w_d_map_overlay = samples[i] / 2 + fig / 5
+                        # pred_img = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
+                        # draw = ImageDraw.Draw(pred_img)
+                        # draw.text((50, h-50), str(''.join(class_name[i])), (215, 123, 175), font=font)
+                        # w_d_map += torch.tensor(np.array(pred_img), device=w_d_map.device)
+                        w_densities = torch.cat(
+                            [w_gt_density, w_d_map, w_d_map_overlay], dim=2)
+                        w_densities = misc.min_max(w_densities)
+                        wandb_densities += [wandb.Image(
+                            torchvision.transforms.ToPILImage()(w_densities))]
                         
                     wandb.log({f"Density Predictions": wandb_densities},
                               step=epoch_1000x, commit=False)
