@@ -79,9 +79,7 @@ class SupervisedMAE(nn.Module):
             nn.init.constant_(m.weight, 1.0)
 
     def forward_decoder(self, x, word_vectors, shot_num=3):
-        print(x.shape, self.decoder_embed)
         x = self.decoder_embed(x)
-        print(x.shape)
 
         if shot_num > 0:
             y = self.clip_enc.encode_text(word_vectors.squeeze(1)).unsqueeze(1)
