@@ -57,7 +57,7 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='/tmp/datasets/', type=str,
+    parser.add_argument('--data_path', default='./tmp/datasets/', type=str,
                         help='dataset path')
     parser.add_argument('--anno_file', default='annotation_FSC147_384.json', type=str,
                         help='annotation json file')
@@ -120,11 +120,11 @@ class TestData(Dataset):
         image.load()
         W, H = image.size
 
-        new_H = 384
-        new_W = 16 * int((W / H * 384) / 16)
+        new_H = 224
+        new_W = 224
         scale_factor_W = float(new_W) / W
         scale_factor_H = float(new_H) / H
-        image = transforms.Resize((new_H, new_W))(image)
+        image = transforms.Resize((224,224))(image)
         Normalize = transforms.Compose([transforms.ToTensor()])
         image = Normalize(image)
 
