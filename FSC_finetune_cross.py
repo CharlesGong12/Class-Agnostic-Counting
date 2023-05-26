@@ -290,7 +290,7 @@ def main(args):
 
     min_MAE = 99999
 
-    misc.load_model_FSC(args=args, model_without_ddp=model_without_ddp)
+    # misc.load_model_FSC(args=args, model_without_ddp=model_without_ddp)
 
     print(f"Start training for {args.epochs} epochs")
     start_time = time.time()
@@ -464,29 +464,38 @@ def main(args):
             wv = wv.to(device, non_blocking=True)
             density_map = torch.zeros([h, w])
             density_map = density_map.to(device, non_blocking=True)
-            start = 0
-            prev = -1
+           
+            start = 0   # the start of the current windows
+            prev = -1   # the end of the previous windows
+            IMAGE_SIZE = 224     # size of the image slice
+            STRIDE = 74          # stride of the sliding window
+
             with torch.no_grad():
-                while start + 383 < w:
-                    output, = model(samples[:, :, :, start:start + 384], wv, 1)
+                while start + IMAGE_SIZE <= w:
+                    #print(1,w,start)
+                    slice = samples[:, :, :, start:start + IMAGE_SIZE]
+                    output, = model(slice, wv, 1)   # wv: word vectors, num: 0 for zero-shot,1 for few-shot
                     output = output.squeeze(0)
                     b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
                     d1 = b1(output[:, 0:prev - start + 1])
-                    b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
-                    d2 = b2(output[:, prev - start + 1:384])
+                    b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - IMAGE_SIZE, 0, 0))
+                    d2 = b2(output[:, prev - start + 1:IMAGE_SIZE])
                     b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
                     density_map_l = b3(density_map[:, 0:start])
                     density_map_m = b1(density_map[:, start:prev + 1])
                     b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
                     density_map_r = b4(density_map[:, prev + 1:w])
                     density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
-                    prev = start + 383
-                    start = start + 128
-                    if start + 383 >= w:
-                        if start == w - 384 + 128:
+                    prev = start + IMAGE_SIZE -1
+                    start = start + STRIDE
+                    #print(2,start)
+                    if start + IMAGE_SIZE-1 >= w:
+                        if start == w - IMAGE_SIZE + STRIDE:
                             break
                         else:
-                            start = w - 384
+                            start = w - IMAGE_SIZE
+                    #print(3,start)
+
             pred_cnt = torch.sum(density_map / 60).item()
             gt_cnt = gt_dots.shape[1]
             cnt_err = abs(pred_cnt - gt_cnt)
@@ -508,26 +517,31 @@ def main(args):
             start = 0
             prev = -1
             with torch.no_grad():
-                while start + 383 < w:
-                    output, = model(samples[:, :, :, start:start + 384], wv, 0)
+                while start + IMAGE_SIZE <= w:
+                    #print(1,w,start)
+                    slice = samples[:, :, :, start:start + IMAGE_SIZE]
+                    output, = model(slice, wv, 0)   # wv: word vectors, num: 0 for zero-shot, 1 for few-shot
                     output = output.squeeze(0)
                     b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
                     d1 = b1(output[:, 0:prev - start + 1])
-                    b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
-                    d2 = b2(output[:, prev - start + 1:384])
+                    b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - IMAGE_SIZE, 0, 0))
+                    d2 = b2(output[:, prev - start + 1:IMAGE_SIZE])
                     b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
                     density_map_l = b3(density_map[:, 0:start])
                     density_map_m = b1(density_map[:, start:prev + 1])
                     b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
                     density_map_r = b4(density_map[:, prev + 1:w])
                     density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
-                    prev = start + 383
-                    start = start + 128
-                    if start + 383 >= w:
-                        if start == w - 384 + 128:
+                    prev = start + IMAGE_SIZE -1
+                    start = start + STRIDE
+                    #print(2,start)
+                    if start + IMAGE_SIZE-1 >= w:
+                        if start == w - IMAGE_SIZE + STRIDE:
                             break
                         else:
-                            start = w - 384
+                            start = w - IMAGE_SIZE
+                    #print(3,start)
+
             pred_cnt = torch.sum(density_map / 60).item()
             gt_cnt = gt_dots.shape[1]
             cnt_err = abs(pred_cnt - gt_cnt)
