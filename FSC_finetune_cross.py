@@ -9,6 +9,8 @@ from pathlib import Path
 import math
 import sys
 from PIL import Image
+import torch.nn as nn
+from torchvision import transforms
 
 import torch
 import torch.backends.cudnn as cudnn
@@ -18,6 +20,7 @@ import torchvision
 import wandb
 
 import timm.optim.optim_factory as optim_factory
+import torchvision.transforms.functional as TF
 
 import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
@@ -109,6 +112,110 @@ def get_args_parser():
 os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
 
 
+class TestData(Dataset):
+    def __init__(self, external: bool, box_bound: int = -1):
+
+        self.img = data_split['val']
+        self.img_dir = im_dir
+        self.external = external
+        self.box_bound = box_bound
+
+        if external:
+            self.external_boxes = []
+            for anno in annotations:
+                rects = []
+                bboxes = annotations[anno]['box_examples_coordinates']
+
+                if bboxes:
+                    image = Image.open('{}/{}'.format(im_dir, anno))
+                    image.load()
+                    W, H = image.size
+
+                    new_H = 384
+                    new_W = 16 * int((W / H * 384) / 16)
+                    scale_factor_W = float(new_W) / W
+                    scale_factor_H = float(new_H) / H
+                    image = transforms.Resize((new_H, new_W))(image)
+                    Normalize = transforms.Compose([transforms.ToTensor()])
+                    image = Normalize(image)
+
+                    for bbox in bboxes:
+                        x1 = int(bbox[0][0] * scale_factor_W)
+                        y1 = int(bbox[0][1] * scale_factor_H)
+                        x2 = int(bbox[2][0] * scale_factor_W)
+                        y2 = int(bbox[2][1] * scale_factor_H)
+                        rects.append([y1, x1, y2, x2])
+
+                    for box in rects:
+                        box2 = [int(k) for k in box]
+                        y1, x1, y2, x2 = box2[0], box2[1], box2[2], box2[3]
+                        bbox = image[:, y1:y2 + 1, x1:x2 + 1]
+                        bbox = transforms.Resize((64, 64))(bbox)
+                        self.external_boxes.append(bbox.numpy())
+
+            self.external_boxes = np.array(self.external_boxes if self.box_bound < 0 else
+                                           self.external_boxes[:self.box_bound])
+            self.external_boxes = torch.Tensor(self.external_boxes)
+
+    def __len__(self):
+        return len(self.img)
+
+    def __getitem__(self, idx):
+        im_id = self.img[idx]
+        anno = annotations[im_id]
+        bboxes = anno['box_examples_coordinates'] if self.box_bound < 0 else \
+            anno['box_examples_coordinates'][:self.box_bound]
+        dots = np.array(anno['points'])
+
+        image = Image.open('{}/{}'.format(im_dir, im_id))
+        image.load()
+        W, H = image.size
+
+        new_H = 384
+        new_W = 16 * int((W / H * 384) / 16)
+        scale_factor_W = float(new_W) / W
+        scale_factor_H = float(new_H) / H
+        image = transforms.Resize((new_H, new_W))(image)
+        Normalize = transforms.Compose([transforms.ToTensor()])
+        image = Normalize(image)
+
+        boxes = list()
+        if self.external:
+            boxes = self.external_boxes
+        else:
+            rects = list()
+            for bbox in bboxes:
+                x1 = int(bbox[0][0] * scale_factor_W)
+                y1 = int(bbox[0][1] * scale_factor_H)
+                x2 = int(bbox[2][0] * scale_factor_W)
+                y2 = int(bbox[2][1] * scale_factor_H)
+                rects.append([y1, x1, y2, x2])
+
+            for box in rects:
+                box2 = [int(k) for k in box]
+                y1, x1, y2, x2 = box2[0], box2[1], box2[2], box2[3]
+                bbox = image[:, y1:y2 + 1, x1:x2 + 1]
+                bbox = transforms.Resize((64, 64))(bbox)
+                boxes.append(bbox.numpy())
+
+            boxes = np.array(boxes)
+            boxes = torch.Tensor(boxes)
+
+        if self.box_bound >= 0:
+            assert len(boxes) <= self.box_bound
+
+        # Only for visualisation purpose, no need for ground truth density map indeed.
+        gt_map = np.zeros((image.shape[1], image.shape[2]), dtype='float32')
+        for i in range(dots.shape[0]):
+            gt_map[min(new_H - 1, int(dots[i][1] * scale_factor_H))][min(new_W - 1, int(dots[i][0] * scale_factor_W))] = 1
+        gt_map = ndimage.gaussian_filter(gt_map, sigma=(1, 1), order=0)
+        gt_map = torch.from_numpy(gt_map)
+        gt_map = gt_map * 60
+
+        sample = {'image': image, 'dots': dots, 'boxes': boxes, 'pos': rects if self.external is False else [], 'gt_map': gt_map, 'name': im_id}
+        return sample['image'], sample['dots'], sample['boxes'], sample['pos'], sample['gt_map'], sample['name']
+
+
 class TrainData(Dataset):
     def __init__(self):
         self.img = data_split['train']
@@ -162,7 +269,7 @@ def main(args):
     cudnn.benchmark = True
 
     dataset_train = TrainData()
-    print(dataset_train)
+    dataset_val = TestData()
 
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
@@ -170,7 +277,9 @@ def main(args):
         sampler_train = torch.utils.data.DistributedSampler(
             dataset_train, num_replicas=num_tasks, rank=global_rank, shuffle=True
         )
-        print("Sampler_train = %s" % str(sampler_train))
+        sampler_val = torch.utils.data.DistributedSampler(
+            dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False
+        )
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
 
@@ -195,6 +304,14 @@ def main(args):
 
     data_loader_train = torch.utils.data.DataLoader(
         dataset_train, sampler=sampler_train,
+        batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_mem,
+        drop_last=False,
+    )
+
+    data_loader_val = torch.utils.data.DataLoader(
+        dataset_val, sampler=sampler_val,
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
@@ -387,28 +504,139 @@ def main(args):
                     log_writer.add_scalar(
                         'RMSE', (batch_rmse / args.batch_size) ** 0.5, epoch_1000x)
                 if wandb_run is not None:
-                    log = {"train/loss": loss_value_reduce, "train/lr": lr,
-                           "train/MAE": batch_mae / args.batch_size,
-                           "train/RMSE": (batch_rmse / args.batch_size) ** 0.5}
+                    log = {"Train/Loss": loss_value_reduce, "Train/LR": lr,
+                           "Train/MAE": batch_mae / args.batch_size,
+                           "Train/RMSE": (batch_rmse / args.batch_size) ** 0.5}
                     wandb.log(log, step=epoch_1000x,
-                              commit=True if data_iter_step == 0 else False)
+                              commit=False)
 
         # Only use 1 batches when overfitting
         metric_logger.synchronize_between_processes()
         print("Averaged stats:", metric_logger)
         train_stats = {k: meter.global_avg for k,
                        meter in metric_logger.meters.items()}
+        
+        # Begin Validation
+        val_mae = 0
+        val_rmse = 0
+        model.eval()
+        val_metric_logger = misc.MetricLogger(delimiter="  ")
+        for data_iter_step, (samples, gt_dots, boxes, pos, gt_map, im_name) in \
+                enumerate(metric_logger.log_every(data_loader_val, print_freq, header)):
+            im_name = Path(im_name[0])
+            samples = samples.to(device, non_blocking=True)
+            gt_dots = gt_dots.to(device, non_blocking=True).half()
+            boxes = boxes.to(device, non_blocking=True)
+            num_boxes = boxes.shape[1] if boxes.nelement() > 0 else 0
+            _, _, h, w = samples.shape
+            r_cnt = 0
+            s_cnt = 0
+            for rect in pos:
+                r_cnt += 1
+                if r_cnt > 3:
+                    break
+                if rect[2] - rect[0] < 10 and rect[3] - rect[1] < 10:
+                    s_cnt += 1
+            if s_cnt >= 1:
+                r_images = []
+                r_densities = []
+                r_images.append(TF.crop(samples[0], 0, 0, int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h / 3), 0, int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], 0, int(w / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h / 3), int(w / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h * 2 / 3), 0, int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h * 2 / 3), int(w / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], 0, int(w * 2 / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h * 2 / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
+
+                pred_cnt = 0
+                for r_image in r_images:
+                    r_image = transforms.Resize((h, w))(r_image).unsqueeze(0)
+                    density_map = torch.zeros([h, w])
+                    density_map = density_map.to(device, non_blocking=True)
+                    start = 0
+                    prev = -1
+
+                    with torch.no_grad():
+                        while start + 383 < w:
+                            output, = model(r_image[:, :, :, start:start + 384], boxes, num_boxes)
+                            output = output.squeeze(0)
+                            b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
+                            d1 = b1(output[:, 0:prev - start + 1])
+                            b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
+                            d2 = b2(output[:, prev - start + 1:384])
+
+                            b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
+                            density_map_l = b3(density_map[:, 0:start])
+                            density_map_m = b1(density_map[:, start:prev + 1])
+                            b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
+                            density_map_r = b4(density_map[:, prev + 1:w])
+
+                            density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
+
+                            prev = start + 383
+                            start = start + 128
+                            if start + 383 >= w:
+                                if start == w - 384 + 128:
+                                    break
+                                else:
+                                    start = w - 384
+
+                    pred_cnt += torch.sum(density_map / 60).item()
+                    r_densities += [density_map]
+            else:
+                density_map = torch.zeros([h, w])
+                density_map = density_map.to(device, non_blocking=True)
+                start = 0
+                prev = -1
+                with torch.no_grad():
+                    while start + 383 < w:
+                        output, = model(samples[:, :, :, start:start + 384], boxes, num_boxes)
+                        output = output.squeeze(0)
+                        b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
+                        d1 = b1(output[:, 0:prev - start + 1])
+                        b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
+                        d2 = b2(output[:, prev - start + 1:384])
+
+                        b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
+                        density_map_l = b3(density_map[:, 0:start])
+                        density_map_m = b1(density_map[:, start:prev + 1])
+                        b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
+                        density_map_r = b4(density_map[:, prev + 1:w])
+
+                        density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
+
+                        prev = start + 383
+                        start = start + 128
+                        if start + 383 >= w:
+                            if start == w - 384 + 128:
+                                break
+                            else:
+                                start = w - 384
+                pred_cnt = torch.sum(density_map / 60).item()
+            gt_cnt = gt_dots.shape[1]
+            cnt_err = abs(pred_cnt - gt_cnt)
+            val_mae += cnt_err
+            val_rmse += cnt_err ** 2
+        val_metric_logger.synchronize_between_processes()
+
+        if wandb_run is not None:
+            log = {"Val/MAE": val_mae / len(data_loader_val),
+                    "Val/RMSE": (val_rmse / len(data_loader_val)) ** 0.5}
+            wandb.log(log, step=epoch_1000x,
+                        commit=True if data_iter_step == 0 else False)
 
         # save train status and model
         if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs):
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch, suffix=f"finetuning_{epoch}")
-        if args.output_dir and train_mae / (len(data_loader_train) * args.batch_size) < min_MAE:
-            min_MAE = train_mae / (len(data_loader_train) * args.batch_size)
+                loss_scaler=loss_scaler, epoch=epoch, suffix=f"_{epoch}")
+        if args.output_dir and val_mae / (len(data_loader_val)) < min_MAE:
+            min_MAE = val_mae / (len(data_loader_val))
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch, suffix="finetuning_minMAE")
+                loss_scaler=loss_scaler, epoch=epoch, suffix="_minMAE")
 
         # Output log status
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
