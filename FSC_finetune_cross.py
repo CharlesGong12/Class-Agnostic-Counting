@@ -390,10 +390,11 @@ def main(args):
                         fig = output[i].unsqueeze(0).repeat(3, 1, 1)
                         f1 = gt_density[i].unsqueeze(0).repeat(3, 1, 1)
                         _, h, w = samples[i].shape
+                        # 
                         #print(samples[i].shape, fig.shape, f1.shape)
-                        w_gt_density = samples[i] / 2 + f1 / 5
-                        w_d_map = fig / 10
-                        w_d_map_overlay = samples[i] / 2 + fig / 5
+                        w_gt_density = samples[i] / 5 + f1 / 3
+                        w_d_map = fig/5
+                        w_d_map_overlay = samples[i] / 5 + fig / 5
                         # pred_img = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
                         # draw = ImageDraw.Draw(pred_img)
                         # draw.text((50, h-50), str(''.join(class_name[i])), (215, 123, 175), font=font)
