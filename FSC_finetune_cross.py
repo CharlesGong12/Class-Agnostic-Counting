@@ -106,7 +106,7 @@ def get_args_parser():
     parser.add_argument('--log_dir', default='./logs/fim6_dir',
                         help='path where to tensorboard log')
     parser.add_argument("--title", default="CounTR_finetuning", type=str)
-    parser.add_argument("--wandb", default="counting", type=str)
+    parser.add_argument("--wandb", default=None, type=str)
     parser.add_argument("--team", default="fdudip", type=str)
     parser.add_argument("--wandb_id", default=None, type=str)
 

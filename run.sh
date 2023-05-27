@@ -23,4 +23,4 @@ python FSC_test_cross\(few-shot\).py --output_dir ./data/out/results_base --resu
 
 CUDA_VISIBLE_DEVICES=0 python FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-5 --output_dir ./data/out/CLIP --log_dir None --title CounTR-CLIP --wandb CounTR-CLIP
 
-torchrun --nnodes=1 --nproc-per-node=4 --rdzv-backend=c10d --rdzv-endpoint=localhost:0 FSC_finetune_cross.py --epochs 500 --batch_size 8 --lr 1e-5 --output_dir ./data/train/Resnet --title Resnet --resume ./FSC147.pth --wandb CounTR --data_path /tmp/datasets
+torchrun --nnodes=1 --nproc-per-node=4 --rdzv-backend=c10d --rdzv-endpoint=localhost:0 /remote-home/xjzhao/CounTR/FSC_finetune_cross.py --epochs 500 --batch_size 8 --lr 1e-5 --output_dir ./data/train/Resnet18 --title Resnet18 --resume ./FSC147.pth --data_path /tmp/datasets --wandb CounTR

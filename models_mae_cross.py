@@ -14,8 +14,7 @@ from timm.models.vision_transformer import PatchEmbed, Block
 from models_crossvit import CrossAttentionBlock
 
 from util.pos_embed import get_2d_sincos_pos_embed
-
-from torchvision.models import resnet50,ResNet50_Weights
+from torchvision.models import resnet18, ResNet18_Weights
 
 class SupervisedMAE(nn.Module):
     def __init__(self, img_size=384, patch_size=16, in_chans=3,
@@ -45,9 +44,11 @@ class SupervisedMAE(nn.Module):
 
         self.shot_token = nn.Parameter(torch.zeros(512))
 
-        # Exemplar encoder with ResNet50, [3, 64, 64] -> [512]
-        self.exemplar_encoder = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
-        self.exemplar_encoder.fc = nn.Linear(2048, 512, bias=True)
+        # Exemplar encoder with ResNet50, [3, 64, 64] -> [512,1,1]
+        weights = ResNet18_Weights.DEFAULT
+        self.exemplar_encoder = resnet18(weights=weights)
+        layers=list(self.exemplar_encoder.children())
+        self.exemplar_encoder = nn.Sequential(*layers[:-1])
 
 
         self.decoder_blocks = nn.ModuleList([
@@ -150,7 +151,7 @@ class SupervisedMAE(nn.Module):
             cnt+=1
             if cnt > shot_num:
                 break
-            yi=self.exemplar_encoder(yi) # yi [N,3,64,64]->[N,512]
+            yi=self.exemplar_encoder(yi).view(-1,512)
             N, C = yi.shape
             y1.append(yi) # y1 [3,N,512]    
             
