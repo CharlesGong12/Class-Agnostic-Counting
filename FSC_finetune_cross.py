@@ -273,7 +273,8 @@ def main(args):
     cudnn.benchmark = True
 
     dataset_train = TrainData()
-    dataset_val = TestData()
+    dataset_val = TestData(box_bound=-1)
+    dataset_val_zs = TestData(box_bound=0)
 
     if True:  # args.distributed:
         num_tasks = misc.get_world_size()
@@ -283,6 +284,9 @@ def main(args):
         )
         sampler_val = torch.utils.data.DistributedSampler(
             dataset_val, num_replicas=num_tasks, rank=global_rank, shuffle=False
+        )
+        sampler_val_zs = torch.utils.data.DistributedSampler(
+            dataset_val_zs, num_replicas=num_tasks, rank=global_rank, shuffle=False
         )
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
@@ -316,7 +320,15 @@ def main(args):
 
     data_loader_val = torch.utils.data.DataLoader(
         dataset_val, sampler=sampler_val,
-        batch_size=args.batch_size,
+        batch_size=1,
+        num_workers=args.num_workers,
+        pin_memory=args.pin_mem,
+        drop_last=False,
+    )
+
+    data_loader_val_zs = torch.utils.data.DataLoader(
+        dataset_val_zs, sampler=sampler_val_zs,
+        batch_size=1,
         num_workers=args.num_workers,
         pin_memory=args.pin_mem,
         drop_last=False,
@@ -527,7 +539,7 @@ def main(args):
         model.eval()
         val_metric_logger = misc.MetricLogger(delimiter="  ")
         for data_iter_step, (samples, gt_dots, boxes, pos, gt_map, im_name) in \
-                enumerate(metric_logger.log_every(data_loader_val, print_freq, header)):
+                enumerate(val_metric_logger.log_every(data_loader_val, print_freq, header)):
             im_name = Path(im_name[0])
             samples = samples.to(device, non_blocking=True)
             gt_dots = gt_dots.to(device, non_blocking=True).half()
@@ -554,7 +566,6 @@ def main(args):
                 r_images.append(TF.crop(samples[0], 0, int(w * 2 / 3), int(h / 3), int(w / 3)))
                 r_images.append(TF.crop(samples[0], int(h / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
                 r_images.append(TF.crop(samples[0], int(h * 2 / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
-
                 pred_cnt = 0
                 for r_image in r_images:
                     r_image = transforms.Resize((h, w))(r_image).unsqueeze(0)
@@ -626,10 +637,114 @@ def main(args):
             val_rmse += cnt_err ** 2
         val_metric_logger.synchronize_between_processes()
 
+        val_zs_mae = 0
+        val_zs_rmse = 0
+        val_zs_metric_logger = misc.MetricLogger(delimiter="  ")
+        for data_iter_step, (samples, gt_dots, boxes, pos, gt_map, im_name) in \
+                enumerate(val_zs_metric_logger.log_every(data_loader_val_zs, print_freq, header)):
+            im_name = Path(im_name[0])
+            samples = samples.to(device, non_blocking=True)
+            gt_dots = gt_dots.to(device, non_blocking=True).half()
+            boxes = boxes.to(device, non_blocking=True)
+            num_boxes = boxes.shape[1] if boxes.nelement() > 0 else 0
+            _, _, h, w = samples.shape
+            r_cnt = 0
+            s_cnt = 0
+            for rect in pos:
+                r_cnt += 1
+                if r_cnt > 3:
+                    break
+                if rect[2] - rect[0] < 10 and rect[3] - rect[1] < 10:
+                    s_cnt += 1
+            if s_cnt >= 1:
+                r_images = []
+                r_densities = []
+                r_images.append(TF.crop(samples[0], 0, 0, int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h / 3), 0, int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], 0, int(w / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h / 3), int(w / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h * 2 / 3), 0, int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h * 2 / 3), int(w / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], 0, int(w * 2 / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
+                r_images.append(TF.crop(samples[0], int(h * 2 / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
+                pred_cnt = 0
+                for r_image in r_images:
+                    r_image = transforms.Resize((h, w))(r_image).unsqueeze(0)
+                    density_map = torch.zeros([h, w])
+                    density_map = density_map.to(device, non_blocking=True)
+                    start = 0
+                    prev = -1
+
+                    with torch.no_grad():
+                        while start + 383 < w:
+                            output, = model(r_image[:, :, :, start:start + 384], boxes, num_boxes)
+                            output = output.squeeze(0)
+                            b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
+                            d1 = b1(output[:, 0:prev - start + 1])
+                            b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
+                            d2 = b2(output[:, prev - start + 1:384])
+
+                            b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
+                            density_map_l = b3(density_map[:, 0:start])
+                            density_map_m = b1(density_map[:, start:prev + 1])
+                            b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
+                            density_map_r = b4(density_map[:, prev + 1:w])
+
+                            density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
+
+                            prev = start + 383
+                            start = start + 128
+                            if start + 383 >= w:
+                                if start == w - 384 + 128:
+                                    break
+                                else:
+                                    start = w - 384
+
+                    pred_cnt += torch.sum(density_map / 60).item()
+                    r_densities += [density_map]
+            else:
+                density_map = torch.zeros([h, w])
+                density_map = density_map.to(device, non_blocking=True)
+                start = 0
+                prev = -1
+                with torch.no_grad():
+                    while start + 383 < w:
+                        output, = model(samples[:, :, :, start:start + 384], boxes, num_boxes)
+                        output = output.squeeze(0)
+                        b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
+                        d1 = b1(output[:, 0:prev - start + 1])
+                        b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
+                        d2 = b2(output[:, prev - start + 1:384])
+
+                        b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
+                        density_map_l = b3(density_map[:, 0:start])
+                        density_map_m = b1(density_map[:, start:prev + 1])
+                        b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
+                        density_map_r = b4(density_map[:, prev + 1:w])
+
+                        density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
+
+                        prev = start + 383
+                        start = start + 128
+                        if start + 383 >= w:
+                            if start == w - 384 + 128:
+                                break
+                            else:
+                                start = w - 384
+                pred_cnt = torch.sum(density_map / 60).item()
+            gt_cnt = gt_dots.shape[1]
+            cnt_err = abs(pred_cnt - gt_cnt)
+            val_zs_mae += cnt_err
+            val_zs_rmse += cnt_err ** 2
+        val_zs_metric_logger.synchronize_between_processes()
+
         if misc.is_main_process():
             if wandb_run is not None:
-                log = {"Val/MAE": val_mae / len(data_loader_val),
-                        "Val/RMSE": (val_rmse / len(data_loader_val)) ** 0.5}
+                log = {"Zero-shot Val/MAE": val_zs_mae / len(data_loader_val_zs),
+                        "Zero-shot Val/RMSE": (val_zs_rmse / len(data_loader_val_zs)) ** 0.5,
+                        "Few-shot Val/MAE": val_mae / len(data_loader_val),
+                        "Few-shot Val/RMSE": (val_rmse / len(data_loader_val)) ** 0.5}
                 wandb.log(log, step=epoch_1000x,
                             commit=True if data_iter_step == 0 else False)
 
