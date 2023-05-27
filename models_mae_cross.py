@@ -152,7 +152,9 @@ class SupervisedMAE(nn.Module):
 
     def forward_decoder(self, x, y_, shot_num=3):
         ## Feature Interaction Module
-        x_short = x     # [batch_size, 576, 768]
+        # We need a linear layer to reduce the channel of x_short
+        # ([8, 576, 768]) -> ([8, 576, 512])
+        x_short = self.decoder_proj(x)     # [batch_size, 576, 768]
 
         # embed tokens
         x = self.decoder_embed(x)
@@ -190,8 +192,6 @@ class SupervisedMAE(nn.Module):
         ## decoder
         # print("Before decoder:",x.shape)
         # ([8, 576, 768]) -> ([8, 576, 512])
-        # We need a linear layer to reduce the channel of x_short
-        x_short = self.decoder_proj(x_short)    # ([8, 576, 768]) -> ([8, 576, 512])
         x = x + x_short         # Resnet
 
         # Density map regression
@@ -214,8 +214,8 @@ class SupervisedMAE(nn.Module):
     def forward(self, imgs, boxes, shot_num):
         # if boxes.nelement() > 0:
         #     torchvision.utils.save_image(boxes[0], f"data/out/crops/box_{time.time()}_{random.randint(0, 99999):>5}.png")
-        with torch.no_grad():
-            latent = self.forward_encoder(imgs)
+        # with torch.no_grad():
+        latent = self.forward_encoder(imgs)
 
         # print("After encoder:",latent.shape)
         # ([8, 576, 768])
