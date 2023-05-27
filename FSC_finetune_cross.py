@@ -15,6 +15,7 @@ from torchvision import transforms
 import torch
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
+import scipy.ndimage as ndimage
 from torch.utils.data import Dataset
 import torchvision
 import wandb
@@ -27,6 +28,9 @@ from util.misc import NativeScalerWithGradNormCount as NativeScaler
 import util.lr_sched as lr_sched
 from util.FSC147 import transform_train
 import models_mae_cross
+
+import warnings
+warnings.filterwarnings('ignore')
 
 
 def get_args_parser():
