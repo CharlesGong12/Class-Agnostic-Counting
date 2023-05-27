@@ -346,11 +346,14 @@ def main(args):
                 output = model(samples, word_vectors, shot_num)
 
             # Compute loss function
-
-            #print(output.shape, gt_density.shape, masks.shape)
-            #print(output.shape, gt_density.shape)
+            mask = np.random.binomial(n=1, p=0.8, size=[224, 224])
+            masks = np.tile(mask, (output.shape[0], 1))
+            masks = masks.reshape(output.shape[0], 224, 224)
+            masks = torch.from_numpy(masks).to(device)
+            # print(output.shape, gt_density.shape, masks.shape)
+            # print(output.shape, gt_density.shape)
             loss = (output - gt_density) ** 2
-            loss = torch.mean(loss)
+            loss = (loss * masks / (224 * 224)).sum() / output.shape[0]
             loss_value = loss.item()
 
             # Update information of MAE and RMSE
