@@ -46,7 +46,7 @@ class ResizeSomeImage(object):
 class ResizePreTrainImage(ResizeSomeImage):
     """
     Resize the image so that:
-        1. Image is equal to 384 * 384
+        1. Image is equal to 224*224
         2. The new height and new width are divisible by 16
         3. The aspect ratio is preserved
     Density and boxes correctness not preserved(crop and horizontal flip)
@@ -83,7 +83,7 @@ class ResizePreTrainImage(ResizeSomeImage):
 class ResizeTrainImage(ResizeSomeImage):
     """
     Resize the image so that:
-        1. Image is equal to 384 * 384
+        1. Image is equal to 224 * 224
         2. The new height and new width are divisible by 16
         3. The aspect ratio is possibly preserved
     Density map is cropped to have the same size(and position) with the cropped image
@@ -101,94 +101,65 @@ class ResizeTrainImage(ResizeSomeImage):
 
         W, H = image.size
 
-        new_H = 16 * int(H / 16)
-        new_W = 16 * int(W / 16)
+        new_H=new_W=224
+        # new_H = 16 * int(H / 16)
+        # new_W = 16 * int(W / 16)
         scale_factor = float(new_W) / W
         resized_image = transforms.Resize((new_H, new_W))(image)
-        resized_density = cv2.resize(density, (new_W, new_H))
+        # print(type(resized_image))
+        resized_image=transforms.ToTensor()(resized_image)
+        # print(np.sum((density*60)>=1))
+        resized_density = cv2.resize(density, (new_H,new_W))    # both of image and density are resized to 224*224
 
         # Augmentation probability
-        aug_p = random.random()
-        aug_flag = 0
-        mosaic_flag = 0
-        if aug_p < 0.4:  # 0.4
-            aug_flag = 1
-            if aug_p < 0.25:  # 0.25
-                aug_flag = 0
-                mosaic_flag = 1
-
+        aug_p=random.random()
+        aug_flag=0
+        if aug_p<0.1:   # Gaussian noise
+            aug_flag=1
+        if aug_p>=0.1 and aug_p<0.2:    #flip
+            aug_flag=2
+        if aug_p>=0.2 and aug_p<0.3:    #both
+            aug_flag=3  # both
+        
         # Gaussian noise
-        resized_image = preprocess(resized_image)
-        if aug_flag == 1:
+        if aug_flag==1:
             noise = np.random.normal(0, 0.1, resized_image.size())
             noise = torch.from_numpy(noise)
-            re_image = resized_image + noise
-            re_image = torch.clamp(re_image, 0, 1)
+            resized_image = resized_image + noise
+            resized_image = torch.clamp(resized_image, 0, 1)
+            resized_image=Augmentation(resized_image)
+        
+        # flip
+        if aug_flag==2:
+            resized_image=TF.hflip(resized_image)
+            resized_density=cv2.flip(resized_density,1)
+        
+        # both
+        if aug_flag==3:
+            noise = np.random.normal(0, 0.1, resized_image.size())
+            noise = torch.from_numpy(noise)
+            resized_image = resized_image + noise
+            resized_image = torch.clamp(resized_image, 0, 1)
+            resized_image=Augmentation(resized_image)
+            resized_image=TF.hflip(resized_image)
+            resized_density=cv2.flip(resized_density,1)
 
-        # Color jitter and Gaussian blur
-        if aug_flag == 1:
-            re_image = Augmentation(re_image)
 
-        # Random affine
-        if aug_flag == 1:
-            re1_image = re_image.transpose(0, 1).transpose(1, 2).numpy()
-            keypoints = []
-            for i in range(dots.shape[0]):
-                keypoints.append(Keypoint(x=min(new_W - 1, int(dots[i][0] * scale_factor)), y=min(new_H - 1, int(dots[i][1]))))
-            kps = KeypointsOnImage(keypoints, re1_image.shape)
+        # re_image = resized_image
+        # resized_density = np.zeros((resized_density.shape[0], resized_density.shape[1]), dtype='float32')
+        # for i in range(dots.shape[0]):
+        #     resized_density[min(new_H - 1, int(dots[i][1]))][min(new_W - 1, int(dots[i][0] * scale_factor))] = 1
 
-            seq = iaa.Sequential([
-                iaa.Affine(
-                    rotate=(-15, 15),
-                    scale=(0.8, 1.2),
-                    shear=(-10, 10),
-                    translate_percent={"x": (-0.2, 0.2), "y": (-0.2, 0.2)}
-                )
-            ])
-            re1_image, kps_aug = seq(image=re1_image, keypoints=kps)
-
-            # Produce dot annotation map
-            resized_density = np.zeros((resized_density.shape[0], resized_density.shape[1]), dtype='float32')
-            for i in range(len(kps.keypoints)):
-                if (int(kps_aug.keypoints[i].y) <= new_H - 1 and int(kps_aug.keypoints[i].x) <= new_W - 1) and not \
-                        kps_aug.keypoints[i].is_out_of_image(re1_image):
-                    resized_density[int(kps_aug.keypoints[i].y)][int(kps_aug.keypoints[i].x)] = 1
-            resized_density = torch.from_numpy(resized_density)
-
-            re_image = TTensor(re1_image)
-
-        # Random horizontal flip
-        if aug_flag == 1:
-            flip_p = random.random()
-            if flip_p > 0.5:
-                re_image = TF.hflip(re_image)
-                resized_density = TF.hflip(resized_density)
-
-        # Random 384*384 crop in a new_W*384 image and 384*new_W density map
-        if aug_flag == 0:
-            re_image = resized_image
-            resized_density = np.zeros((resized_density.shape[0], resized_density.shape[1]), dtype='float32')
-            for i in range(dots.shape[0]):
-                resized_density[min(new_H - 1, int(dots[i][1]))][min(new_W - 1, int(dots[i][0] * scale_factor))] = 1
-            resized_density = torch.from_numpy(resized_density)
-
-        start = random.randint(0, new_W - 224)
-        reresized_image = TF.crop(re_image, 0, start, 224, 224)
-        reresized_density=TF.crop(resized_density, 0, start, 224, 224)
-        # reresized_density = resized_density[:, start:start + 224]
-
-        # Gaussian distribution density map
-        reresized_density = ndimage.gaussian_filter(reresized_density.numpy(), sigma=(1, 1), order=0)
-
+        
         # Density map scale up
-        reresized_density = reresized_density * 60
-        reresized_density = torch.from_numpy(reresized_density)
-
+        reresized_density = resized_density * 60
+        reresized_density=torch.from_numpy(reresized_density)
+        # print((reresized_density>=1).sum())
         # Word vector
         wv = tokenizer([self.class_dict[im_id]])
-
-        # boxes shape [3,3,64,64], image shape [3,384,384], density shape[384,384]
-        sample = {'image': reresized_image, 'word_vector': wv, 'class_name': self.class_dict[im_id], 'gt_density': reresized_density, 'm_flag': m_flag}
+        #print( reresized_density)
+        # boxes shape [3,3,64,64], image shape [3,224,224], density shape[224,224]
+        sample = {'image': resized_image, 'word_vector': wv, 'class_name': self.class_dict[im_id], 'gt_density': reresized_density, 'm_flag': m_flag}
 
         return sample
 

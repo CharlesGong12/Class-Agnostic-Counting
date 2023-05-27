@@ -118,7 +118,6 @@ class SupervisedMAE(nn.Module):
         return x
 
     def forward(self, imgs, word_vectors, shot_num):
-        #print(imgs.shape, word_vectors.shape, shot_num)
         with torch.no_grad():
             latent = self.clip_enc.encode_image(imgs).unsqueeze(1)  # [N, 1, 384]
         #print(latent.shape)
