@@ -15,6 +15,8 @@ from models_crossvit import CrossAttentionBlock
 
 from util.pos_embed import get_2d_sincos_pos_embed
 
+from torchvision.models import resnet50,ResNet50_Weights
+
 class SupervisedMAE(nn.Module):
     def __init__(self, img_size=384, patch_size=16, in_chans=3,
                  embed_dim=1024, depth=24, num_heads=16,
@@ -43,32 +45,9 @@ class SupervisedMAE(nn.Module):
 
         self.shot_token = nn.Parameter(torch.zeros(512))
 
-        # Exemplar encoder with CNN
-        self.decoder_proj1 = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2) #[3,64,64]->[64,32,32]
-        )
-        self.decoder_proj2 = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(128),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2) #[64,32,32]->[128,16,16]
-        )
-        self.decoder_proj3 = nn.Sequential(
-            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(2) # [128,16,16]->[256,8,8]
-        )
-        self.decoder_proj4 = nn.Sequential(
-            nn.Conv2d(256, decoder_embed_dim, kernel_size=3, stride=1, padding=1),
-            nn.InstanceNorm2d(512),
-            nn.ReLU(inplace=True),
-            nn.AdaptiveAvgPool2d((1,1))
-            # [256,8,8]->[512,1,1]
-        )
+        # Exemplar encoder with ResNet50, [3, 64, 64] -> [512]
+        self.exemplar_encoder = resnet50(weights=ResNet50_Weights.IMAGENET1K_V2)
+        self.exemplar_encoder.fc = nn.Linear(2048, 512, bias=True)
 
 
         self.decoder_blocks = nn.ModuleList([
@@ -171,12 +150,9 @@ class SupervisedMAE(nn.Module):
             cnt+=1
             if cnt > shot_num:
                 break
-            yi = self.decoder_proj1(yi)
-            yi = self.decoder_proj2(yi)
-            yi = self.decoder_proj3(yi)
-            yi = self.decoder_proj4(yi)
-            N, C,_,_ = yi.shape
-            y1.append(yi.squeeze(-1).squeeze(-1)) # yi [N,C,1,1]->[N,C]       
+            yi=self.exemplar_encoder(yi) # yi [N,3,64,64]->[N,512]
+            N, C = yi.shape
+            y1.append(yi) # y1 [3,N,512]    
             
         if shot_num > 0:
             y = torch.cat(y1,dim=0).reshape(shot_num,N,C).to(x.device)
@@ -214,8 +190,8 @@ class SupervisedMAE(nn.Module):
     def forward(self, imgs, boxes, shot_num):
         # if boxes.nelement() > 0:
         #     torchvision.utils.save_image(boxes[0], f"data/out/crops/box_{time.time()}_{random.randint(0, 99999):>5}.png")
-        # with torch.no_grad():
-        latent = self.forward_encoder(imgs)
+        with torch.no_grad():
+            latent = self.forward_encoder(imgs)
 
         # print("After encoder:",latent.shape)
         # ([8, 576, 768])
