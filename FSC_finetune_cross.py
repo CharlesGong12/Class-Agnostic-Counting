@@ -113,7 +113,7 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
 
 
 class TestData(Dataset):
-    def __init__(self, external: bool, box_bound: int = -1):
+    def __init__(self, external: bool = False, box_bound: int = 3):
 
         self.img = data_split['val']
         self.img_dir = im_dir
@@ -379,8 +379,9 @@ def main(args):
 
         optimizer.zero_grad()
 
-        if log_writer is not None:
-            print('log_dir: {}'.format(log_writer.log_dir))
+        if misc.is_main_process():
+            if log_writer is not None:
+                print('log_dir: {}'.format(log_writer.log_dir))
 
         for data_iter_step, (samples, gt_density, boxes, m_flag) in enumerate(
                 metric_logger.log_every(data_loader_train, print_freq, header)):
@@ -434,7 +435,7 @@ def main(args):
             train_rmse += batch_rmse
 
             # Output visualisation information to tensorboard
-            if data_iter_step == 0:
+            if data_iter_step == 0 and misc.is_main_process():
                 if log_writer is not None:
                     fig = output[0].unsqueeze(0).repeat(3, 1, 1)
                     f1 = gt_density[0].unsqueeze(0).repeat(3, 1, 1)
@@ -491,7 +492,7 @@ def main(args):
             metric_logger.update(lr=lr)
 
             loss_value_reduce = misc.all_reduce_mean(loss_value)
-            if (data_iter_step + 1) % accum_iter == 0:
+            if (data_iter_step + 1) % accum_iter == 0 and misc.is_main_process():
                 if log_writer is not None:
                     """ We use epoch_1000x as the x-axis in tensorboard.
                     This calibrates different curves when batch size changes.
@@ -621,11 +622,12 @@ def main(args):
             val_rmse += cnt_err ** 2
         val_metric_logger.synchronize_between_processes()
 
-        if wandb_run is not None:
-            log = {"Val/MAE": val_mae / len(data_loader_val),
-                    "Val/RMSE": (val_rmse / len(data_loader_val)) ** 0.5}
-            wandb.log(log, step=epoch_1000x,
-                        commit=True if data_iter_step == 0 else False)
+        if misc.is_main_process():
+            if wandb_run is not None:
+                log = {"Val/MAE": val_mae / len(data_loader_val),
+                        "Val/RMSE": (val_rmse / len(data_loader_val)) ** 0.5}
+                wandb.log(log, step=epoch_1000x,
+                            commit=True if data_iter_step == 0 else False)
 
         # save train status and model
         if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs):
@@ -656,7 +658,8 @@ def main(args):
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
-    wandb.run.finish()
+    if misc.is_main_process():
+        wandb.run.finish()
 
 
 if __name__ == '__main__':
