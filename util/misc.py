@@ -22,7 +22,7 @@ import pandas as pd
 import torch
 import torch.distributed as dist
 import wandb
-# from torch._six import inf
+#from torch._six import inf
 import timm
 import matplotlib.pyplot as plt
 from torchvision import transforms
@@ -404,7 +404,7 @@ def all_reduce_mean(x):
         return x
 
 
-def plot_counts(res_csv: Union[str, list[str]], output_dir: str, suffix: str = "", smooth: bool = False):
+def plot_counts(res_csv, output_dir: str, suffix: str = "", smooth: bool = False):
     if suffix:
         suffix = f"_{suffix}"
     if smooth:

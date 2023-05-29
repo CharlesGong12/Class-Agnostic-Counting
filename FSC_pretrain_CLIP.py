@@ -27,7 +27,7 @@ import util.misc as misc
 from util.misc import NativeScalerWithGradNormCount as NativeScaler
 import util.lr_sched as lr_sched
 from util.FSC147 import transform_pre_train
-import models_mae_noct
+import models_clip
 
 
 def get_args_parser():
@@ -62,15 +62,15 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='./datasets/FSC/', type=str,
+    parser.add_argument('--data_path', default='./data/FSC147/', type=str,
                         help='dataset path')
     parser.add_argument('--anno_file', default='annotation_FSC147_384.json', type=str,
                         help='annotation json file')
     parser.add_argument('--data_split_file', default='Train_Test_Val_FSC_147.json', type=str,
                         help='data split json file')
-    parser.add_argument('--im_dir', default='FSC147_384_V2/images_384_VarV2', type=str,
+    parser.add_argument('--im_dir', default='images_384_VarV2', type=str,
                         help='images directory')
-    parser.add_argument('--gt_dir', default='FSC147_384_V2/gt_density_map_adaptive_384_VarV2', type=str,
+    parser.add_argument('--gt_dir', default='gt_density_map_adaptive_384_VarV2', type=str,
                         help='ground truth directory')
     parser.add_argument('--output_dir', default='./data/out/pre_4_dir',
                         help='path where to save, empty for no saving')
@@ -101,7 +101,7 @@ def get_args_parser():
     parser.add_argument('--log_dir', default='./logs/pre_4_dir',
                         help='path where to tensorboard log')
     parser.add_argument("--title", default="CounTR_pretraining", type=str)
-    parser.add_argument("--wandb", default="counting", type=str)
+    parser.add_argument("--wandb", default=None, type=str)
     parser.add_argument("--team", default="fdudip", type=str)
     parser.add_argument("--wandb_id", default=None, type=str)
 
@@ -199,7 +199,7 @@ def main(args):
     )
 
     # define the model
-    model = models_mae_noct.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
+    model = models_clip.__dict__[args.model](norm_pix_loss=args.norm_pix_loss)
 
     model.to(device)
 
@@ -249,7 +249,7 @@ def main(args):
         if log_writer is not None:
             print('log_dir: {}'.format(log_writer.log_dir))
 
-        model_ = getattr(models_mae_noct, args.model)()
+        model_ = getattr(models_clip, args.model)()
 
         for data_iter_step, samples in enumerate(metric_logger.log_every(data_loader_train, print_freq, header)):
             epoch_1000x = int((data_iter_step / len(data_loader_train) + epoch) * 1000)
@@ -260,7 +260,7 @@ def main(args):
             samples = samples.to(device, non_blocking=True)
 
             with torch.cuda.amp.autocast():
-                loss, pred, mask = model(samples, mask_ratio=args.mask_ratio)
+                loss, pred, mask = model(samples)
 
             loss_value = loss.item()
 
