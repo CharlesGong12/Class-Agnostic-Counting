@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw, ImageFont
 import math
 import sys
 from PIL import Image
-
+import scipy
 import torch
 import torch.backends.cudnn as cudnn
 from torch.utils.tensorboard import SummaryWriter
@@ -23,17 +23,19 @@ import torch.optim as optim
 from torchvision import transforms
 import scipy.ndimage as ndimage
 import torch.nn as nn
+import torch
 
 import warnings
-from model_regression import CountRegression
+from model_regression import CountRegression, vgg11_model, regression_model
 import util.misc as misc
 import cv2
 
+
 def get_args_parser():
     parser = argparse.ArgumentParser('regression-training', add_help=False)
-    parser.add_argument('--batch_size', default=1, type=int,
+    parser.add_argument('--batch_size', default=16, type=int,
                         help='Batch size per GPU (effective batch size is batch_size * accum_iter * # gpus')
-    parser.add_argument('--epochs', default=200, type=int)
+    parser.add_argument('--epochs', default=300, type=int)
     parser.add_argument('--accum_iter', default=1, type=int,
                         help='Accumulate gradient iterations (for increasing the effective batch size under memory constraints)')
 
@@ -42,13 +44,13 @@ def get_args_parser():
                         help='Name of model to train')
 
     # Optimizer parameters
-    parser.add_argument('--weight_decay', type=float, default=0.05,
+    parser.add_argument('--weight_decay', type=float, default=5e-4,
                         help='weight decay (default: 0.05)')
-    parser.add_argument('--lr', type=float, default=None, metavar='LR',
+    parser.add_argument('--lr', type=float, default=8e-5, metavar='LR',
                         help='learning rate (absolute lr)')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='./datasets/FSC/FSC147_384_V2', type=str,
+    parser.add_argument('--data_path', default='/root/CAC_GC/tmp/datasets', type=str,
                         help='dataset path')
     parser.add_argument('--data_split_file', default='Train_Test_Val_FSC_147.json', type=str,
                         help='data split json file')
@@ -56,8 +58,8 @@ def get_args_parser():
                         help='ground truth directory')
     parser.add_argument('--output_dir', default='./data/out/fim6_dir',
                         help='path where to save, empty for no saving')
-    # parser.add_argument('--device', default='cuda',
-    #                     help='device to use for training / testing')
+    parser.add_argument('--device', default='cuda',
+                        help='device to use for training / testing')
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--resume', default=None, type=str,
                         help='resume from checkpoint')
@@ -65,7 +67,7 @@ def get_args_parser():
     # Training parameters
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
-    parser.add_argument('--num_workers', default=1, type=int)
+    parser.add_argument('--num_workers', default=6, type=int)
     parser.add_argument('--pin_mem', action='store_true',
                         help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     parser.add_argument('--no_pin_mem', action='store_false', dest='pin_mem')
@@ -89,7 +91,7 @@ def get_args_parser():
 
     return parser
 
-#os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
+os.environ["CUDA_LAUNCH_BLOCKING"] = '1'
 
 class ResizeSomeImage(object):
     def __init__(self, data_path=Path('./datasets/FSC/FSC147_384_V2/')):
@@ -121,14 +123,55 @@ class ResizeDensity(ResizeSomeImage):
         new_H = 384
         new_W = 384
         resized_density = cv2.resize(density, (new_W, new_H))
+        # the probability of augmenting the image
+        p=torch.rand(1)
+        if p<0.2:
+            # Gaussian
+            resized_density=scipy.ndimage.gaussian_filter(resized_density, sigma=(1,1))
+            # resized_density = Gau.Gaussian_filter(resized_density, 15, 3)
+        if p>0.8:
+            # flip
+            resized_density = np.flip(resized_density, axis=1).copy()
+        if 0.1<p<0.3 or p>0.9:
+            # rotate
+            resized_density = np.rot90(resized_density, 1, (0, 1)).copy()
+        # dmin=np.min(resized_density)
+        # dmax=np.max(resized_density)
+        # resized_density=(resized_density-dmin)/(dmax-dmin)
+        # density shape[384,384]
+        sample = { 'gt_density': resized_density}
+
+        return sample
+    
+class ResizeDensity_val(ResizeSomeImage):
+    """
+    Resize the DENSITY so that:
+        1. Density is equal to 384 * 384
+        2. The new height and new width are divisible by 16
+        3. The aspect ratio is possibly preserved
+    """
+
+    def __init__(self, data_path=Path('./datasets/FSC147/'), MAX_HW=384):
+        super().__init__(data_path)
+        self.max_hw = MAX_HW
+
+    def __call__(self, sample):
+        density =  sample['gt_density']
+
+
+        new_H = 384
+        new_W = 384
+        resized_density = cv2.resize(density, (new_W, new_H))
 
         # density shape[384,384]
         sample = { 'gt_density': resized_density}
 
         return sample
-
 def transform_train(data_path: Path, MAX_HW: int):
     return transforms.Compose([ResizeDensity(data_path, MAX_HW)])
+
+def transform_val(data_path: Path, MAX_HW: int):
+    return transforms.Compose([ResizeDensity_val(data_path, MAX_HW)])
 
 class TrainData(Dataset):
     def __init__(self):
@@ -156,7 +199,7 @@ class ValData(Dataset):
     def __init__(self, ):
         self.density = data_split['val']
         self.density_dir = density_dir
-        self.TransformTrain = transform_train(data_path,384)
+        self.TransformTrain = transform_val(data_path,384)
     def __len__(self):
         return len(self.density)
 
@@ -174,7 +217,7 @@ class TestData(Dataset):
     def __init__(self, ):
         self.density = data_split['test']
         self.density_dir = density_dir
-        self.TransformTrain = transform_train(data_path,384)
+        self.TransformTrain = transform_val(data_path,384)
     def __len__(self):
         return len(self.density)
 
@@ -197,7 +240,7 @@ def main(args):
     print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
     print("{}".format(args).replace(', ', ',\n'))
 
-    # device = torch.device(args.device)
+    device = torch.device(args.device)
 
     # fix the seed for reproducibility
     seed = args.seed + misc.get_rank()
@@ -259,9 +302,10 @@ def main(args):
     # define the model
     model = CountRegression()
 
-    # model.to(device)
+    model.to(device)
     criterion = nn.SmoothL1Loss() 
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
+    optimizer = optim.SGD(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=[0.3*args.epochs,0.6*args.epochs,0.9*args.epochs], gamma=0.1)
     best_val_loss = float('inf')
     best_model_state= None
 
@@ -270,6 +314,7 @@ def main(args):
         model.train()
         total_loss = 0
         for inputs in data_loader_train:
+            inputs=inputs.to(device)
             # print(inputs.shape)
             outputs = model(inputs.unsqueeze(1))
             labels=torch.sum(inputs,dim=(1,2))
@@ -279,56 +324,50 @@ def main(args):
             optimizer.zero_grad() 
 
             loss.backward()  
-
+            #print(loss)
             optimizer.step()
+
             
             total_loss += loss.item()
+        scheduler.step()
 
-        if epoch % 10 == 0:
-            print(f'Epoch {epoch} - Loss: {total_loss/len(train_loader)}') 
-        #torch.cuda.synchronize()
-
-        metric_logger.update(loss=loss.item())
-
-        metric_logger.update(lr=lr)
+        print(f'Epoch {epoch} - Loss: {total_loss/len(data_loader_train)}') 
+        torch.cuda.synchronize()
 
         loss_value_reduce = misc.all_reduce_mean(loss.item())
-        if misc.is_main_process():
-            if wandb_run is not None:
-                log = {"Train/Loss":loss.item()}
-                wandb.log(log, step=epoch_1000x,
-                            commit=True if data_iter_step == 0 else False)
 
         model.eval()
-        val_loss = 0; val_acc = 0 
-        for inputs in data_loader_test:
-            outputs = model(inputs).item()
-            labels=torch.sum(inputs).item()
-            loss = criterion(outputs, labels)
-            val_loss += loss.item()
+        val_loss = 0; 
+        with torch.no_grad():
+            for inputs in data_loader_test:
+                inputs=inputs.to(device)
+                outputs = model(inputs.unsqueeze(1))
+                labels=torch.sum(inputs,dim=(1,2))
+                labels=labels.unsqueeze(1)
+                loss = criterion(outputs, labels)
+                val_loss += loss.item()
+                #print(loss)
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_model_state = model.state_dict()  
             
-        if (epoch) % 10 == 0:
-            print(f'Epoch {epoch} - Val Loss: {val_loss}') 
+        print(f'Epoch {epoch} - Val Loss: {val_loss/len(data_loader_test)}') 
         if misc.is_main_process():
             if wandb_run is not None:
-                log = {"Val/MAE with text": val_mae / len(data_loader_test),
-                        "Val/RMSE with text": (val_rmse / len(data_loader_test)) ** 0.5,
-                        "Val/MAE without text": val_zs_mae / len(data_loader_test),
-                        "Val/RMSE without text": (val_zs_rmse / len(data_loader_test)) ** 0.5}
-                wandb.log(log, step=epoch_1000x)
-        if args.output_dir and misc.is_main_process():
-            # if log_writer is not None:
-            #     log_writer.flush()
-            with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-                f.write(json.dumps(log_stats) + "\n")
+                log = {"Train/Loss":total_loss/len(data_loader_train),"Val/Loss":val_loss/len(data_loader_test),'epoch':epoch,'lr':optimizer.param_groups[0]['lr']}
+                wandb.log(log,
+                            commit=True )
+
+        # if args.output_dir and misc.is_main_process():
+        #     # if log_writer is not None:
+        #     #     log_writer.flush()
+        #     with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
+        #         f.write(json.dumps(log_stats) + "\n")
 
 
     model.load_state_dict(best_model_state)  
 
-    torch.save(model.state_dict(), 'model_regression.pth') 
+    torch.save(model.state_dict(), 'model_regression_aug.pth') 
 
     wandb.run.finish()
 
