@@ -366,7 +366,7 @@ def load_model_FSC(args, model_without_ddp):
             print(f"Removing key pos_embed from pretrained checkpoint")
             del checkpoint['model']['pos_embed']
 
-        model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
+        model_without_ddp.load_state_dict(checkpoint['model'], strict=True)
         print("Resume checkpoint %s" % args.resume)
 
 def load_model_FSC1(args, model_without_ddp):

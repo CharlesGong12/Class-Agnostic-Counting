@@ -44,11 +44,32 @@ class SupervisedMAE(nn.Module):
 
         self.shot_token = nn.Parameter(torch.zeros(512))
 
-        # Exemplar encoder with ResNet50, [3, 64, 64] -> [512,1,1]
-        weights = ResNet18_Weights.DEFAULT
-        self.exemplar_encoder = resnet18(weights=weights)
-        layers=list(self.exemplar_encoder.children())
-        self.exemplar_encoder = nn.Sequential(*layers[:-1])
+        # Exemplar encoder with CNN
+        self.decoder_proj1 = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(64),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2) #[3,64,64]->[64,32,32]
+        )
+        self.decoder_proj2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(128),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2) #[64,32,32]->[128,16,16]
+        )
+        self.decoder_proj3 = nn.Sequential(
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(256),
+            nn.ReLU(inplace=True),
+            nn.MaxPool2d(2) # [128,16,16]->[256,8,8]
+        )
+        self.decoder_proj4 = nn.Sequential(
+            nn.Conv2d(256, decoder_embed_dim, kernel_size=3, stride=1, padding=1),
+            nn.InstanceNorm2d(512),
+            nn.ReLU(inplace=True),
+            nn.AdaptiveAvgPool2d((1,1))
+            # [256,8,8]->[512,1,1]
+        )
 
 
         self.decoder_blocks = nn.ModuleList([
@@ -78,9 +99,6 @@ class SupervisedMAE(nn.Module):
             nn.ReLU(inplace=True),
             nn.Conv2d(256, 1, kernel_size=1, stride=1)
         )  
-
-        # ([8, 576, 768]) -> ([8, 576, 512]) Using Linear layer
-        self.decoder_proj =  nn.Linear(768, 512, bias=True)
     
         # --------------------------------------------------------------------------
 
@@ -131,11 +149,6 @@ class SupervisedMAE(nn.Module):
         return x
 
     def forward_decoder(self, x, y_, shot_num=3):
-        ## Feature Interaction Module
-        # We need a linear layer to reduce the channel of x_short
-        # ([8, 576, 768]) -> ([8, 576, 512])
-        x_short = self.decoder_proj(x)     # [batch_size, 576, 768]
-
         # embed tokens
         x = self.decoder_embed(x)
         # add pos embed
@@ -151,9 +164,12 @@ class SupervisedMAE(nn.Module):
             cnt+=1
             if cnt > shot_num:
                 break
-            yi=self.exemplar_encoder(yi).view(-1,512)
-            N, C = yi.shape
-            y1.append(yi) # y1 [3,N,512]    
+            yi = self.decoder_proj1(yi)
+            yi = self.decoder_proj2(yi)
+            yi = self.decoder_proj3(yi)
+            yi = self.decoder_proj4(yi)
+            N, C,_,_ = yi.shape
+            y1.append(yi.squeeze(-1).squeeze(-1)) # yi [N,C,1,1]->[N,C]       
             
         if shot_num > 0:
             y = torch.cat(y1,dim=0).reshape(shot_num,N,C).to(x.device)
@@ -166,11 +182,6 @@ class SupervisedMAE(nn.Module):
             x = blk(x, y)
         x = self.decoder_norm(x)
         
-        ## decoder
-        # print("Before decoder:",x.shape)
-        # ([8, 576, 768]) -> ([8, 576, 512])
-        x = x + x_short         # Resnet
-
         # Density map regression
         n, hw, c = x.shape
         h = w = int(math.sqrt(hw))
@@ -184,8 +195,8 @@ class SupervisedMAE(nn.Module):
                         self.decode_head2(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
         x = F.interpolate(
                         self.decode_head3(x), size=x.shape[-1]*2, mode='bilinear', align_corners=False)
+        x = torch.exp(x)
         x = x.squeeze(-3)
-
         return x
 
     def forward(self, imgs, boxes, shot_num):
@@ -193,10 +204,6 @@ class SupervisedMAE(nn.Module):
         #     torchvision.utils.save_image(boxes[0], f"data/out/crops/box_{time.time()}_{random.randint(0, 99999):>5}.png")
         with torch.no_grad():
             latent = self.forward_encoder(imgs)
-
-        # print("After encoder:",latent.shape)
-        # ([8, 576, 768])
-
         pred = self.forward_decoder(latent, boxes, shot_num)  # [N, 384, 384]
         return pred
 
