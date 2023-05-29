@@ -32,6 +32,7 @@ import models_mae_cross
 import warnings
 warnings.filterwarnings('ignore')
 
+torch.set_float32_matmul_precision('high')
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
@@ -417,9 +418,9 @@ def main(args):
             for i in range(m_flag.shape[0]):
                 flag += m_flag[i].item()
             if flag == 0:
-                shot_num = random.choice([0, 3])
+                shot_num = random.choice([0, 0, 3]) # Better chances of zero shot
             else:
-                shot_num = random.randint(1, 3)
+                shot_num = random.randint(2, 3)
 
             with torch.cuda.amp.autocast():
                 output = model(samples, boxes, shot_num)
