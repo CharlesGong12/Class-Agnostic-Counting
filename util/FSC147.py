@@ -178,13 +178,11 @@ class ResizeTrainImage(ResizeSomeImage):
         reresized_image = TF.crop(re_image, 0, start, 384, 384)
         reresized_density = resized_density[:, start:start + 384]
 
-        # Gaussian distribution density map
-        reresized_density = ndimage.gaussian_filter(reresized_density.numpy(), sigma=(1, 1), order=0)
-
         # Density map scale up
         reresized_density -= reresized_density.min()
-        reresized_density /= reresized_density.max()
-        reresized_density = torch.from_numpy(reresized_density)
+        max = reresized_density.max()
+        if max > 0:
+            reresized_density /= reresized_density.max()
 
         # boxes shape [3,3,64,64], image shape [3,384,384], density shape[384,384]
         sample = {'image': reresized_image, 'gt_density': reresized_density, 'dots': dots, 'id': im_id}

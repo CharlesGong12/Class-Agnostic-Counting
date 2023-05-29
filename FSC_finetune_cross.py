@@ -211,6 +211,8 @@ def main(args):
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
 
+    loss_func = nn.MSELoss()
+
     log_writer = None
     if global_rank == 0:
         if args.wandb is not None:
@@ -321,16 +323,11 @@ def main(args):
                 output = model(samples)
 
             # Compute loss function
-            mask = np.random.binomial(n=1, p=0.8, size=[384, 384])
-            masks = np.tile(mask, (output.shape[0], 1))
-            masks = masks.reshape(output.shape[0], 384, 384)
-            masks = torch.from_numpy(masks).to(device)
-            loss = (output - gt_density) ** 2
-            loss = (loss * masks / (384 * 384)).sum() / output.shape[0]
+            loss = loss_func(output, gt_density)
 
             loss_value = loss.item()
 
-            print(f'{data_iter_step}/{len(data_loader_train)}: loss: {loss_value}')
+            # print(f'{data_iter_step}/{len(data_loader_train)}: loss: {loss_value}')
 
             train_loss += loss_value
 
@@ -353,15 +350,12 @@ def main(args):
                     for i in range(samples.shape[0]):
                         fig = output[i].unsqueeze(0).repeat(3, 1, 1)
                         f1 = gt_density[i].unsqueeze(0).repeat(3, 1, 1)
-                        w_gt_density = samples[i] / 2 + f1 / 2
-                        w_d_map = fig
-                        w_d_map_overlay = samples[i] / 2 + fig / 2
                         w_densities = torch.cat(
-                            [w_gt_density, w_d_map, w_d_map_overlay], dim=2)
+                            [samples[i], f1, fig], dim=2)
                         w_densities = misc.min_max(w_densities)
                         wandb_densities += [wandb.Image(
                             torchvision.transforms.ToPILImage()(w_densities))]
-                    wandb.log({f"Density predictions": wandb_densities},
+                    wandb.log({f"Train/Density Predictions": wandb_densities},
                               step=epoch_1000x, commit=False)
 
             if not math.isfinite(loss_value):
@@ -403,11 +397,11 @@ def main(args):
         
         # Begin Validation
         val_zs_mae = 0
-        val_zs_rmse = 0
         val_zs_metric_logger = misc.MetricLogger(delimiter="  ")
         for data_iter_step, (samples, gt_dots, gt_map, im_name) in \
                 enumerate(val_zs_metric_logger.log_every(data_loader_val_zs, print_freq, header)):
             im_name = Path(im_name[0])
+            gt_map = gt_map.to(device, non_blocking=True)
             samples = samples.to(device, non_blocking=True)
             gt_dots = gt_dots.to(device, non_blocking=True).half()
             _, _, h, w = samples.shape
@@ -439,13 +433,21 @@ def main(args):
                             break
                         else:
                             start = w - 384
-            cnt_err = (output - gt_map) ** 2
+            cnt_err = torch.norm((density_map - gt_map), p=2)
             val_zs_mae += cnt_err
         val_zs_metric_logger.synchronize_between_processes()
+
 
         if misc.is_main_process():
             if wandb_run is not None:
                 log = {"Val/Zero-shot Loss": val_zs_mae / len(data_loader_val_zs)}
+                w_densities = torch.cat(
+                    [samples[i], density_map, gt_map[i]], dim=2)
+                w_densities = misc.min_max(w_densities)
+                wandb_densities += [wandb.Image(
+                    torchvision.transforms.ToPILImage()(w_densities))]
+                wandb.log({f"Val/Density Predictions": wandb_densities},
+                            step=epoch_1000x, commit=False)
                 wandb.log(log, step=epoch_1000x,
                             commit=True if data_iter_step == 0 else False)
                 print(log)
