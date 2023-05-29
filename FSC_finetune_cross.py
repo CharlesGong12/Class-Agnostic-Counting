@@ -14,7 +14,7 @@ from torchvision import transforms
 
 import torch
 import torch.backends.cudnn as cudnn
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 import scipy.ndimage as ndimage
 from torch.utils.data import Dataset
 import torchvision
@@ -29,8 +29,8 @@ import util.lr_sched as lr_sched
 from util.FSC147 import transform_train
 import models_mae_cross
 
-import warnings
-warnings.filterwarnings('ignore')
+# import warnings
+# warnings.filterwarnings('ignore')
 
 torch.set_float32_matmul_precision('high')
 
@@ -292,12 +292,8 @@ def main(args):
     else:
         sampler_train = torch.utils.data.RandomSampler(dataset_train)
 
+    log_writer = None
     if global_rank == 0:
-        if args.log_dir is not None:
-            os.makedirs(args.log_dir, exist_ok=True)
-            log_writer = SummaryWriter(log_dir=args.log_dir)
-        else:
-            log_writer = None
         if args.wandb is not None:
             wandb_run = wandb.init(
                 config=args,
@@ -370,7 +366,7 @@ def main(args):
     loss_scaler = NativeScaler()
 
     min_MAE = 99999
-
+    zs_min_MAE = 99999
     misc.load_model_FSC(args=args, model_without_ddp=model_without_ddp)
 
     print(f"Start training for {args.epochs} epochs")
@@ -396,9 +392,9 @@ def main(args):
 
         optimizer.zero_grad()
 
-        if misc.is_main_process():
-            if log_writer is not None:
-                print('log_dir: {}'.format(log_writer.log_dir))
+        # if misc.is_main_process():
+        #     if log_writer is not None:
+        #         print('log_dir: {}'.format(log_writer.log_dir))
 
         for data_iter_step, (samples, gt_density, boxes, m_flag) in enumerate(
                 metric_logger.log_every(data_loader_train, print_freq, header)):
@@ -742,12 +738,13 @@ def main(args):
 
         if misc.is_main_process():
             if wandb_run is not None:
-                log = {"Zero-shot Val/MAE": val_zs_mae / len(data_loader_val_zs),
-                        "Zero-shot Val/RMSE": (val_zs_rmse / len(data_loader_val_zs)) ** 0.5,
-                        "Few-shot Val/MAE": val_mae / len(data_loader_val),
-                        "Few-shot Val/RMSE": (val_rmse / len(data_loader_val)) ** 0.5}
+                log = {"Val/Zero-shot MAE": val_zs_mae / len(data_loader_val_zs),
+                        "Val/Zero-shot RMSE": (val_zs_rmse / len(data_loader_val_zs)) ** 0.5,
+                        "Val/Few-shot MAE": val_mae / len(data_loader_val),
+                        "Val/Few-shot RMSE": (val_rmse / len(data_loader_val)) ** 0.5}
                 wandb.log(log, step=epoch_1000x,
                             commit=True if data_iter_step == 0 else False)
+                print(log)
 
         # save train status and model
         if args.output_dir and (epoch % 50 == 0 or epoch + 1 == args.epochs):
@@ -759,6 +756,12 @@ def main(args):
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch, suffix="_minMAE")
+            
+        if args.output_dir and val_zs_mae / (len(data_loader_val_zs)) < zs_min_MAE:
+            zs_min_MAE = val_zs_mae / (len(data_loader_val_zs))
+            misc.save_model(
+                args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
+                loss_scaler=loss_scaler, epoch=epoch, suffix="_zs_minMAE")
 
         # Output log status
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},

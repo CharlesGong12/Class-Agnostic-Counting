@@ -25,6 +25,4 @@ CUDA_VISIBLE_DEVICES=0 python FSC_finetune_cross.py --epochs 1000 --batch_size 8
 
 torchrun --nnodes=1 --nproc-per-node=4 --rdzv-backend=c10d --rdzv-endpoint=localhost:0 /remote-home/xjzhao/CounTR/FSC_finetune_cross.py --epochs 500 --batch_size 8 --lr 1e-6 --output_dir ./data/train/CounTR-exp --title CounTR-exp --resume ./FSC147.pth --data_path /tmp/datasets --wandb CounTR
 
-OMP_NUM_THREADS=2 CUDA_VISIBLE_DEVICES=2,3,6,7 torchrun --nnodes=1 --nproc-per-node=4 --rdzv-backend=c10d --rdzv-endpoint=localhost:0 /remote-home/xjzhao
-/CounTR/FSC_finetune_cross.py --epochs 500 --batch_size 8 --lr 1e-5 --output_dir ./data/train/CounTR-exp --title CounTR-exp --resume ./FSC147.pth --data_path /tmp/datasets --
-wandb CounTR
+CUDA_VISIBLE_DEVICES=0 python FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-5 --output_dir ./data/train/CounTR-exp --title CounTR-exp --resume ./FSC147.pth --data_path /tmp/datasets --wandb CounTR

@@ -199,7 +199,6 @@ class SupervisedMAE(nn.Module):
         x = x.squeeze(-3)
         return x
 
-    @torch.compile(mode='reduce-overhead')
     def forward(self, imgs, boxes, shot_num):
         # if boxes.nelement() > 0:
         #     torchvision.utils.save_image(boxes[0], f"data/out/crops/box_{time.time()}_{random.randint(0, 99999):>5}.png")
