@@ -417,7 +417,7 @@ def main(args):
             for i in range(m_flag.shape[0]):
                 flag += m_flag[i].item()
             if flag == 0:
-                shot_num = random.randint(0, 3)
+                shot_num = random.choice([0, 3])
             else:
                 shot_num = random.randint(1, 3)
 
