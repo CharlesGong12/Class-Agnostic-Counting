@@ -62,15 +62,15 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='./data/FSC147/', type=str,
+    parser.add_argument('--data_path', default='./datasets/FSC/', type=str,
                         help='dataset path')
     parser.add_argument('--anno_file', default='annotation_FSC147_384.json', type=str,
                         help='annotation json file')
     parser.add_argument('--data_split_file', default='Train_Test_Val_FSC_147.json', type=str,
                         help='data split json file')
-    parser.add_argument('--im_dir', default='images_384_VarV2', type=str,
+    parser.add_argument('--im_dir', default='FSC147_384_V2/images_384_VarV2', type=str,
                         help='images directory')
-    parser.add_argument('--gt_dir', default='gt_density_map_adaptive_384_VarV2', type=str,
+    parser.add_argument('--gt_dir', default='FSC147_384_V2/gt_density_map_adaptive_384_VarV2', type=str,
                         help='ground truth directory')
     parser.add_argument('--output_dir', default='./data/out/pre_4_dir',
                         help='path where to save, empty for no saving')
