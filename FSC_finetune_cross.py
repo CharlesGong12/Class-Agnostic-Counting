@@ -441,8 +441,10 @@ def main(args):
         if misc.is_main_process():
             if wandb_run is not None:
                 log = {"Val/Zero-shot Loss": val_zs_mae / len(data_loader_val_zs)}
+                fig = density_map.unsqueeze(0).repeat(3, 1, 1)
+                f1 = gt_map[0].unsqueeze(0).repeat(3, 1, 1)
                 w_densities = torch.cat(
-                    [samples[i], density_map, gt_map[i]], dim=2)
+                    [samples[0], fig, f1], dim=2)
                 w_densities = misc.min_max(w_densities)
                 wandb_densities += [wandb.Image(
                     torchvision.transforms.ToPILImage()(w_densities))]

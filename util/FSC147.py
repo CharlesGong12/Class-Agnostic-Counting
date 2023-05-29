@@ -178,6 +178,9 @@ class ResizeTrainImage(ResizeSomeImage):
         reresized_image = TF.crop(re_image, 0, start, 384, 384)
         reresized_density = resized_density[:, start:start + 384]
 
+        # Gaussian distribution density map
+        reresized_density = ndimage.gaussian_filter(reresized_density.numpy(), sigma=(1, 1), order=0)
+
         # Density map scale up
         reresized_density -= reresized_density.min()
         max = reresized_density.max()
