@@ -30,12 +30,12 @@ class CountRegression(nn.Module):
         x = self.pool1(torch.relu(self.bn2(self.conv2(torch.relu(self.bn1(self.conv1(x)))))))
         x = self.pool2(torch.relu(self.bn4(self.conv4(torch.relu(self.bn3(self.conv3(x)))))))
         x = self.pool3(torch.relu(self.bn6(self.conv6(torch.relu(self.bn5(self.conv5(x)))))))
-        print(x.shape)
+        #print(x.shape)
         x = x.view(-1, 512 * 44 * 44)  
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         x = self.fc3(x)
-        print(x.shape)
+        #print(x.shape)
         return x
 
 def regression_model():
