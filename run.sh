@@ -19,4 +19,4 @@ python FSC_test_cross\(few-shot\).py --output_dir ./data/out/results_base --resu
 # CUDA_VISIBLE_DEVICES=0 python FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-5 --output_dir ./data/out/finetune_large --log_dir None --title CounTR_finetuning_paper_large --resume ./data/out/pretrain_large/checkpoint__pretraining_299.pth --model mae_vit_large_patch16
 # python FSC_test_cross\(few-shot\).py --output_dir ./data/out/results_large --resume ./data/out/finetune_large/checkpoint__finetuning_minMAE.pth --box_bound 3 --model mae_vit_large_patch16
 
-OMP_NUM_THREADS=2 CUDA_VISIBLE_DEVICES=4,5,6,7 torchrun --nnodes=1 --nproc-per-node=4 --rdzv-backend=c10d --rdzv-endpoint=localhost:0  FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-5 --output_dir ./data/train/CounTR-Dmap --title CounTR-Dmap --data_path /tmp/datasets --wandb CounTR
+OMP_NUM_THREADS=2 CUDA_VISIBLE_DEVICES=2,3 torchrun --nnodes=1 --nproc-per-node=2 --rdzv-backend=c10d --rdzv-endpoint=localhost:0  FSC_finetune_cross.py --epochs 1000 --batch_size 8 --lr 1e-5 --output_dir ./data/train/CounTR-Dmap --title CounTR-Dmap --data_path /tmp/datasets --wandb CounTR --resume ./FSC147.pth 

@@ -181,7 +181,7 @@ class ResizeTrainImage(ResizeSomeImage):
         # Gaussian distribution density map
         reresized_density = ndimage.gaussian_filter(reresized_density.numpy(), sigma=(1, 1), order=0)
 
-        # Density map scale up
+        # Density map normalization
         reresized_density -= reresized_density.min()
         max = reresized_density.max()
         if max > 0:
