@@ -409,17 +409,8 @@ def main(args):
             gt_density = gt_density.to(device, non_blocking=True).half()
             boxes = boxes.to(device, non_blocking=True).half()
 
-            # If there is at least one image in the batch using Type 2 Mosaic, 0-shot is banned.
-            flag = 0
-            for i in range(m_flag.shape[0]):
-                flag += m_flag[i].item()
-            if flag == 0:
-                shot_num = random.choice([0, 0, 3]) # Better chances of zero shot
-            else:
-                shot_num = random.randint(2, 3)
-
             with torch.cuda.amp.autocast():
-                output = model(samples, boxes, shot_num)
+                output = model(samples)
 
             # Compute loss function
             mask = np.random.binomial(n=1, p=0.8, size=[384, 384])
