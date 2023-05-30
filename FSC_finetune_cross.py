@@ -473,8 +473,6 @@ def main(args):
                         wandb_densities += [wandb.Image(
                             torchvision.transforms.ToPILImage()(w_densities))]
 
-                    wandb.log({f"Bounding boxes": wandb_bboxes},
-                              step=epoch_1000x, commit=False)
                     wandb.log({f"Density predictions": wandb_densities},
                               step=epoch_1000x, commit=False)
 
