@@ -1,5 +1,6 @@
 **.ini
 **.pth
+**.pkl
 !weights/FSC147.pth
 **__pycache__
 .idea/

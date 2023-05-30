@@ -111,15 +111,7 @@ class ResizeTrainImage(ResizeSomeImage):
         resized_image = transforms.Resize((new_H, new_W))(image)
         resized_density = cv2.resize(density, (new_W, new_H))
 
-        # Augmentation probability
-        aug_p = random.random()
         aug_flag = 0
-        mosaic_flag = 0
-        if aug_p < 0.4:  # 0.4
-            aug_flag = 1
-            if aug_p < 0.25:  # 0.25
-                aug_flag = 0
-                mosaic_flag = 1
 
         # Gaussian noise
         resized_image = TTensor(resized_image)
