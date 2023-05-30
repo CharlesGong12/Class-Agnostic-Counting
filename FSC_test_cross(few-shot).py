@@ -21,6 +21,25 @@ import torchvision.transforms.functional as TF
 import util.misc as misc
 import models_mae_cross
 
+import cv2
+
+def cv_count_dots(dmap):
+    ndmap = dmap.cpu().numpy()
+    ndmap -= ndmap.min()
+    ndmap /= ndmap.max()
+    ndmap = (ndmap * 255).astype(np.uint8)
+    th, threshed = cv2.threshold(ndmap, 150, 255,cv2.THRESH_BINARY | cv2.THRESH_TRIANGLE)
+    cnts = cv2.findContours(threshed, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
+    xcnts = []
+    for cnt in cnts:
+        ca = cv2.contourArea(cnt)
+        xcnts.append(ca)
+    
+    numpy_xcnt = np.array(xcnts)
+    cv_confidence = numpy_xcnt.std() / numpy_xcnt.mean()
+    
+    return len(xcnts), threshed, 1 / cv_confidence
+
 
 def get_args_parser():
     parser = argparse.ArgumentParser('MAE pre-training', add_help=False)
@@ -270,13 +289,18 @@ def main(args):
     # some parameters in training
     train_mae = 0
     train_rmse = 0
+    train_reg_mae = 0
+    train_reg_rmse = 0
+    avg_cnt_mae = 0
+    avg_cnt_rmse = 0
+    auto_cnt_mae = 0
+    auto_cnt_rmse = 0
+    optimal_cnt = 0
 
     loss_array = []
     gt_array = []
     pred_arr = []
     name_arr = []
-
-    err_sort = []
 
     for data_iter_step, (samples, gt_dots, boxes, pos, gt_map, im_name) in \
             enumerate(metric_logger.log_every(data_loader_test, print_freq, header)):
@@ -320,7 +344,7 @@ def main(args):
 
                 with torch.no_grad():
                     while start + 383 < w:
-                        output, = model(r_image[:, :, :, start:start + 384], boxes, num_boxes)
+                        output, = model(r_image[:, :, :, start:start + 384])
                         output = output.squeeze(0)
                         b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
                         d1 = b1(output[:, 0:prev - start + 1])
@@ -344,6 +368,7 @@ def main(args):
                                 start = w - 384
 
                 pred_cnt += torch.sum(density_map / 60).item()
+                cv_cnt, threshed, cv_confidence = cv_count_dots(density_map)
                 r_densities += [density_map]
         else:
             density_map = torch.zeros([h, w])
@@ -352,7 +377,7 @@ def main(args):
             prev = -1
             with torch.no_grad():
                 while start + 383 < w:
-                    output, = model(samples[:, :, :, start:start + 384], boxes, num_boxes)
+                    output, = model(samples[:, :, :, start:start + 384])
                     output = output.squeeze(0)
                     b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
                     d1 = b1(output[:, 0:prev - start + 1])
@@ -376,21 +401,36 @@ def main(args):
                             start = w - 384
 
             pred_cnt = torch.sum(density_map / 60).item()
+            cv_cnt, threshed, cv_confidence = cv_count_dots(density_map)
 
-        if args.normalization:
-            e_cnt = 0
-            for rect in pos:
-                e_cnt += torch.sum(density_map[rect[0]:rect[2] + 1, rect[1]:rect[3] + 1] / 60).item()
-            e_cnt = e_cnt / 3
-            if e_cnt > 1.8:
-                pred_cnt /= e_cnt
+        avg_cnt = pred_cnt + cv_cnt
+        avg_cnt /= 2
+        auto_cnt = cv_cnt if cv_confidence > 1.2 else pred_cnt
+
+        # 1.5: 17.07/114.49 optimal 0.66
 
         gt_cnt = gt_dots.shape[1]
         cnt_err = abs(pred_cnt - gt_cnt)
+        reg_cnt_err = abs(cv_cnt - gt_cnt)
+        avg_cnt_err = abs(avg_cnt - gt_cnt)
+        auto_cnt_err = abs(auto_cnt - gt_cnt)
         train_mae += cnt_err
         train_rmse += cnt_err ** 2
+        train_reg_mae += reg_cnt_err
+        train_reg_rmse += reg_cnt_err ** 2
+        avg_cnt_mae += avg_cnt_err
+        avg_cnt_rmse += avg_cnt_err ** 2
+        auto_cnt_mae += auto_cnt_err
+        auto_cnt_rmse += auto_cnt_err ** 2
 
-        print(f'{data_iter_step}/{len(data_loader_test)}: pred_cnt: {pred_cnt},  gt_cnt: {gt_cnt},  error: {cnt_err},  AE: {cnt_err},  SE: {cnt_err ** 2}, id: {im_name.name}, s_cnt: {s_cnt >= 1}')
+        # 0.6: 13.84
+
+        if auto_cnt_err == min(cnt_err, reg_cnt_err):
+            optimal_cnt += 1
+            print("Optimal!", end='\t\t')
+        else:
+            print("        ", end='\t\t')
+        print(f'{data_iter_step}/{len(data_loader_test)}: error: {cnt_err:.2f}, reg_error: {reg_cnt_err}, avg_error: {avg_cnt_err:.2f}, cv_confidence: {cv_confidence:.2f}, auto_error: {auto_cnt_err:.2f}')
 
         loss_array.append(cnt_err)
         gt_array.append(gt_cnt)
@@ -399,60 +439,44 @@ def main(args):
 
         # compute and save images
         fig = samples[0]
-        box_map = torch.zeros([fig.shape[1], fig.shape[2]], device=device)
-        if args.external is False:
-            for rect in pos:
-                for i in range(rect[2] - rect[0]):
-                    box_map[min(rect[0] + i, fig.shape[1] - 1), min(rect[1], fig.shape[2] - 1)] = 10
-                    box_map[min(rect[0] + i, fig.shape[1] - 1), min(rect[3], fig.shape[2] - 1)] = 10
-                for i in range(rect[3] - rect[1]):
-                    box_map[min(rect[0], fig.shape[1] - 1), min(rect[1] + i, fig.shape[2] - 1)] = 10
-                    box_map[min(rect[2], fig.shape[1] - 1), min(rect[1] + i, fig.shape[2] - 1)] = 10
-            box_map = box_map.unsqueeze(0).repeat(3, 1, 1)
         pred = density_map.unsqueeze(0) if s_cnt < 1 else misc.make_grid(r_densities, h, w).unsqueeze(0)
         pred = torch.cat((pred, torch.zeros_like(pred), torch.zeros_like(pred))) * 5
         drawed = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
         draw = ImageDraw.Draw(drawed)
         draw.text((w-120, h-50), str(round(gt_cnt)), (215, 123, 175), font=font)
         drawed = np.array(drawed).transpose((2, 0, 1))
-        fig = fig + pred + box_map + torch.tensor(np.array(drawed), device=device)
+        fig = fig + pred + torch.tensor(np.array(drawed), device=device)
         fig = torch.clamp(fig, 0, 1)
 
         pred_img = Image.new(mode="RGB", size=(w, h), color=(0, 0, 0))
         draw = ImageDraw.Draw(pred_img)
         draw.text((w-120, h-50), str(round(pred_cnt)), (215, 123, 175), font=font)
+        draw.text((w-50, h-50), str(round(cv_cnt)), (215, 123, 175), font=font)
+        draw.text((w-120, h-120), f"{cv_confidence: .2f}", (215, 123, 175), font=font)
         pred_img = np.array(pred_img).transpose((2, 0, 1))
         pred_img = torch.tensor(np.array(pred_img), device=device) + pred
-        full = torch.cat((samples[0], fig, pred_img), -1)
-        torchvision.utils.save_image(full, (os.path.join(args.output_dir, f'full_{im_name.stem}__{round(pred_cnt)}{im_name.suffix}')))
+        pred_img = torch.clamp(pred_img, 0, 1)
 
-        err_sort.append((cnt_err, im_name.stem))
+        threshed = torch.tensor(threshed, device=device, dtype=torch.float32).unsqueeze(0).repeat(3, 1, 1)
+        threshed /= 255
+
+        full = torch.cat((samples[0], fig, pred_img, threshed), -1)
+        torchvision.utils.save_image(full, (os.path.join(args.output_dir, f'full_{im_name.stem}__{round(pred_cnt)}{im_name.suffix}')))
 
         torch.cuda.synchronize()
 
     metric_logger.synchronize_between_processes()
     print("Averaged stats:", metric_logger)
 
-    log_stats = {'MAE': train_mae / (len(data_loader_test)),
-                 'RMSE': (train_rmse / (len(data_loader_test))) ** 0.5}
-
-    print('Current MAE: {:5.2f}, RMSE: {:5.2f} '.format(train_mae / (len(data_loader_test)), (
+    print('Raw MAE: {:5.2f}, RMSE: {:5.2f} '.format(train_mae / (len(data_loader_test)), (
                 train_rmse / (len(data_loader_test))) ** 0.5))
-    
-    err_sort.sort(key=lambda x: x[0], reverse=True)
-    print("Top error item", [x[1] for x in err_sort[:20]])
-
-    if args.output_dir and misc.is_main_process():
-        with open(os.path.join(args.output_dir, "log.txt"), mode="a", encoding="utf-8") as f:
-            f.write(json.dumps(log_stats) + "\n")
-
-    plt.scatter(gt_array, loss_array)
-    plt.xlabel('Ground Truth')
-    plt.ylabel('Error')
-    plt.savefig(os.path.join(args.output_dir, 'test_stat.png'))
-
-    df = pd.DataFrame(data={'time': np.arange(data_iter_step+1)+1, 'name': name_arr, 'prediction': pred_arr})
-    df.to_csv(os.path.join(args.output_dir, f'results.csv'), index=False)
+    print('CV MAE: {:5.2f}, RMSE: {:5.2f} '.format(train_reg_mae / (len(data_loader_test)), (
+                train_reg_rmse / (len(data_loader_test))) ** 0.5))
+    print('Avg MAE: {:5.2f}, RMSE: {:5.2f} '.format(avg_cnt_mae / (len(data_loader_test)), (
+                avg_cnt_rmse / (len(data_loader_test))) ** 0.5))
+    print('Auto MAE: {:5.2f}, RMSE: {:5.2f} '.format(auto_cnt_mae / (len(data_loader_test)), (
+                auto_cnt_rmse / (len(data_loader_test))) ** 0.5))
+    print('Optimal: {:5.2f}'.format(optimal_cnt / (len(data_loader_test))))
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
