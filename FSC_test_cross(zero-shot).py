@@ -19,8 +19,6 @@ from torchvision import transforms
 import torchvision.transforms.functional as TF
 import timm
 
-assert "0.4.5" <= timm.__version__ <= "0.4.9"  # version check
-
 import util.misc as misc
 import models_mae_cross
 
@@ -59,7 +57,7 @@ def get_args_parser():
                         help='epochs to warmup LR')
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='/GPFS/data/changliu/FSC147/', type=str,
+    parser.add_argument('--data_path', default='/tmp/datasets', type=str,
                         help='dataset path')
     parser.add_argument('--anno_file', default='annotation_FSC147_384.json', type=str,
                         help='annotation json file')
@@ -274,7 +272,7 @@ def main(args):
 
                 with torch.no_grad():
                     while start + 383 < w:
-                        output, = model(r_image[:, :, :, start:start + 384], boxes, 3)
+                        output, = model(r_image[:, :, :, start:start + 384])
                         output = output.squeeze(0)
                         b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
                         d1 = b1(output[:, 0:prev - start + 1])
@@ -305,7 +303,7 @@ def main(args):
             prev = -1
             with torch.no_grad():
                 while start + 383 < w:
-                    output, = model(samples[:, :, :, start:start + 384], boxes, 0)
+                    output, = model(samples[:, :, :, start:start + 384])
                     output = output.squeeze(0)
                     b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
                     d1 = b1(output[:, 0:prev - start + 1])
