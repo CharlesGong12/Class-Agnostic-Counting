@@ -433,7 +433,7 @@ def main(args):
                 batch_rmse += cnt_err ** 2
 
                 if i == 0:
-                    print(f'{data_iter_step}/{len(data_loader_train)}: loss: {loss_value},  pred_cnt: {pred_cnt},  gt_cnt: {gt_cnt},  error: {abs(pred_cnt - gt_cnt)},  AE: {cnt_err},  SE: {cnt_err ** 2}, {shot_num}-shot ')
+                    print(f'{data_iter_step}/{len(data_loader_train)}: loss: {loss_value},  pred_cnt: {pred_cnt},  gt_cnt: {gt_cnt},  error: {abs(pred_cnt - gt_cnt)},  AE: {cnt_err},  SE: {cnt_err ** 2}')
 
             train_mae += batch_mae
             train_rmse += batch_rmse
@@ -522,109 +522,6 @@ def main(args):
                        meter in metric_logger.meters.items()}
         
         # Begin Validation
-        val_mae = 0
-        val_rmse = 0
-        model.eval()
-        val_metric_logger = misc.MetricLogger(delimiter="  ")
-        for data_iter_step, (samples, gt_dots, boxes, pos, gt_map, im_name) in \
-                enumerate(val_metric_logger.log_every(data_loader_val, print_freq, header)):
-            im_name = Path(im_name[0])
-            samples = samples.to(device, non_blocking=True)
-            gt_dots = gt_dots.to(device, non_blocking=True).half()
-            boxes = boxes.to(device, non_blocking=True)
-            num_boxes = boxes.shape[1] if boxes.nelement() > 0 else 0
-            _, _, h, w = samples.shape
-            r_cnt = 0
-            s_cnt = 0
-            for rect in pos:
-                r_cnt += 1
-                if r_cnt > 3:
-                    break
-                if rect[2] - rect[0] < 10 and rect[3] - rect[1] < 10:
-                    s_cnt += 1
-            if s_cnt >= 1:
-                r_images = []
-                r_densities = []
-                r_images.append(TF.crop(samples[0], 0, 0, int(h / 3), int(w / 3)))
-                r_images.append(TF.crop(samples[0], int(h / 3), 0, int(h / 3), int(w / 3)))
-                r_images.append(TF.crop(samples[0], 0, int(w / 3), int(h / 3), int(w / 3)))
-                r_images.append(TF.crop(samples[0], int(h / 3), int(w / 3), int(h / 3), int(w / 3)))
-                r_images.append(TF.crop(samples[0], int(h * 2 / 3), 0, int(h / 3), int(w / 3)))
-                r_images.append(TF.crop(samples[0], int(h * 2 / 3), int(w / 3), int(h / 3), int(w / 3)))
-                r_images.append(TF.crop(samples[0], 0, int(w * 2 / 3), int(h / 3), int(w / 3)))
-                r_images.append(TF.crop(samples[0], int(h / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
-                r_images.append(TF.crop(samples[0], int(h * 2 / 3), int(w * 2 / 3), int(h / 3), int(w / 3)))
-                pred_cnt = 0
-                for r_image in r_images:
-                    r_image = transforms.Resize((h, w))(r_image).unsqueeze(0)
-                    density_map = torch.zeros([h, w])
-                    density_map = density_map.to(device, non_blocking=True)
-                    start = 0
-                    prev = -1
-
-                    with torch.no_grad():
-                        while start + 383 < w:
-                            output, = model(r_image[:, :, :, start:start + 384], boxes, num_boxes)
-                            output = output.squeeze(0)
-                            b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
-                            d1 = b1(output[:, 0:prev - start + 1])
-                            b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
-                            d2 = b2(output[:, prev - start + 1:384])
-
-                            b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
-                            density_map_l = b3(density_map[:, 0:start])
-                            density_map_m = b1(density_map[:, start:prev + 1])
-                            b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
-                            density_map_r = b4(density_map[:, prev + 1:w])
-
-                            density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
-
-                            prev = start + 383
-                            start = start + 128
-                            if start + 383 >= w:
-                                if start == w - 384 + 128:
-                                    break
-                                else:
-                                    start = w - 384
-
-                    pred_cnt += torch.sum(density_map / 60).item()
-                    r_densities += [density_map]
-            else:
-                density_map = torch.zeros([h, w])
-                density_map = density_map.to(device, non_blocking=True)
-                start = 0
-                prev = -1
-                with torch.no_grad():
-                    while start + 383 < w:
-                        output, = model(samples[:, :, :, start:start + 384], boxes, num_boxes)
-                        output = output.squeeze(0)
-                        b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
-                        d1 = b1(output[:, 0:prev - start + 1])
-                        b2 = nn.ZeroPad2d(padding=(prev + 1, w - start - 384, 0, 0))
-                        d2 = b2(output[:, prev - start + 1:384])
-
-                        b3 = nn.ZeroPad2d(padding=(0, w - start, 0, 0))
-                        density_map_l = b3(density_map[:, 0:start])
-                        density_map_m = b1(density_map[:, start:prev + 1])
-                        b4 = nn.ZeroPad2d(padding=(prev + 1, 0, 0, 0))
-                        density_map_r = b4(density_map[:, prev + 1:w])
-
-                        density_map = density_map_l + density_map_r + density_map_m / 2 + d1 / 2 + d2
-
-                        prev = start + 383
-                        start = start + 128
-                        if start + 383 >= w:
-                            if start == w - 384 + 128:
-                                break
-                            else:
-                                start = w - 384
-                pred_cnt = torch.sum(density_map / 60).item()
-            gt_cnt = gt_dots.shape[1]
-            cnt_err = abs(pred_cnt - gt_cnt)
-            val_mae += cnt_err
-            val_rmse += cnt_err ** 2
-        val_metric_logger.synchronize_between_processes()
-
         val_zs_mae = 0
         val_zs_rmse = 0
         val_zs_metric_logger = misc.MetricLogger(delimiter="  ")
@@ -666,7 +563,7 @@ def main(args):
 
                     with torch.no_grad():
                         while start + 383 < w:
-                            output, = model(r_image[:, :, :, start:start + 384], boxes, num_boxes)
+                            output, = model(r_image[:, :, :, start:start + 384])
                             output = output.squeeze(0)
                             b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
                             d1 = b1(output[:, 0:prev - start + 1])
@@ -698,7 +595,7 @@ def main(args):
                 prev = -1
                 with torch.no_grad():
                     while start + 383 < w:
-                        output, = model(samples[:, :, :, start:start + 384], boxes, num_boxes)
+                        output, = model(samples[:, :, :, start:start + 384])
                         output = output.squeeze(0)
                         b1 = nn.ZeroPad2d(padding=(start, w - prev - 1, 0, 0))
                         d1 = b1(output[:, 0:prev - start + 1])
@@ -730,9 +627,7 @@ def main(args):
         if misc.is_main_process():
             if wandb_run is not None:
                 log = {"Val/Zero-shot MAE": val_zs_mae / len(data_loader_val_zs),
-                        "Val/Zero-shot RMSE": (val_zs_rmse / len(data_loader_val_zs)) ** 0.5,
-                        "Val/Few-shot MAE": val_mae / len(data_loader_val),
-                        "Val/Few-shot RMSE": (val_rmse / len(data_loader_val)) ** 0.5}
+                        "Val/Zero-shot RMSE": (val_zs_rmse / len(data_loader_val_zs)) ** 0.5}
                 wandb.log(log, step=epoch_1000x,
                             commit=True if data_iter_step == 0 else False)
                 print(log)
@@ -742,11 +637,6 @@ def main(args):
             misc.save_model(
                 args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                 loss_scaler=loss_scaler, epoch=epoch, suffix=f"_{epoch}")
-        if args.output_dir and val_mae / (len(data_loader_val)) < min_MAE:
-            min_MAE = val_mae / (len(data_loader_val))
-            misc.save_model(
-                args=args, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                loss_scaler=loss_scaler, epoch=epoch, suffix="_minMAE")
             
         if args.output_dir and val_zs_mae / (len(data_loader_val_zs)) < zs_min_MAE:
             zs_min_MAE = val_zs_mae / (len(data_loader_val_zs))
