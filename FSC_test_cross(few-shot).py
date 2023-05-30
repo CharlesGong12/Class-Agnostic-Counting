@@ -302,6 +302,8 @@ def main(args):
     pred_arr = []
     name_arr = []
 
+    
+
     for data_iter_step, (samples, gt_dots, boxes, pos, gt_map, im_name) in \
             enumerate(metric_logger.log_every(data_loader_test, print_freq, header)):
 
