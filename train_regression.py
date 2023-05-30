@@ -46,7 +46,7 @@ def get_args_parser():
     # Optimizer parameters
     parser.add_argument('--weight_decay', type=float, default=5e-4,
                         help='weight decay (default: 0.05)')
-    parser.add_argument('--lr', type=float, default=8e-5, metavar='LR',
+    parser.add_argument('--lr', type=float, default=5e-5, metavar='LR',
                         help='learning rate (absolute lr)')
 
     # Dataset parameters
@@ -120,9 +120,20 @@ class ResizeDensity(ResizeSomeImage):
         density =  sample['gt_density']
 
 
-        new_H = 384
-        new_W = 384
-        resized_density = cv2.resize(density, (new_W, new_H))
+        H = 384
+        W = 384
+        # print(density.shape)
+        resized_density = cv2.resize(density, (W, H))
+        
+        scale = np.random.uniform(0.65,0.95)  # scale from 0.5 to 0.9
+        scaled_density = np.zeros((H, W), dtype=np.float32)
+        # scale the density map
+        new_width = int(W * scale)
+        new_height = int(H * scale)
+        start=(H-new_height)//2
+        scaled_density[start:new_height+start, start:new_width+start] = np.resize(density, (new_height, new_width))
+        resized_density = scaled_density
+
         # the probability of augmenting the image
         p=torch.rand(1)
         if p<0.2:
@@ -159,9 +170,18 @@ class ResizeDensity_val(ResizeSomeImage):
         density =  sample['gt_density']
 
 
-        new_H = 384
-        new_W = 384
+        H=new_H = 384
+        W=new_W = 384
         resized_density = cv2.resize(density, (new_W, new_H))
+
+        scale = np.random.uniform(0.65,0.95)  # scale from 0.5 to 0.9
+        scaled_density = np.zeros((H, W), dtype=np.float32)
+        # scale the density map
+        new_width = int(W * scale)
+        new_height = int(H * scale)
+        start=(H-new_height)//2
+        scaled_density[start:new_height+start, start:new_width+start] = np.resize(density, (new_height, new_width))
+        resized_density = scaled_density
 
         # density shape[384,384]
         sample = { 'gt_density': resized_density}
