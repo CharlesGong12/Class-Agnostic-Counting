@@ -28,17 +28,20 @@ def cv_count_dots(dmap):
     ndmap -= ndmap.min()
     ndmap /= ndmap.max()
     ndmap = (ndmap * 255).astype(np.uint8)
-    th, threshed = cv2.threshold(ndmap, 150, 255,cv2.THRESH_BINARY | cv2.THRESH_TRIANGLE)
+    th, threshed = cv2.threshold(ndmap, 100, 255, cv2.THRESH_BINARY | cv2.THRESH_TRIANGLE)
     cnts = cv2.findContours(threshed, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
     xcnts = []
     for cnt in cnts:
         ca = cv2.contourArea(cnt)
         xcnts.append(ca)
+
+    filtered = [x for x in xcnts if 20 < x < 2000]
     
-    numpy_xcnt = np.array(xcnts)
-    cv_confidence = numpy_xcnt.std() / numpy_xcnt.mean()
+    numpy_xcnt = np.array(filtered)
+    cv_confidence = 1 / (numpy_xcnt.std() / numpy_xcnt.mean())
+    # cv_confidence = (sum(xcnts) / len(xcnts)) / max(xcnts)
     
-    return len(xcnts), threshed, 1 / cv_confidence
+    return len(filtered), threshed, cv_confidence
 
 
 def get_args_parser():
@@ -302,7 +305,7 @@ def main(args):
     pred_arr = []
     name_arr = []
 
-    
+    output_tuple = []
 
     for data_iter_step, (samples, gt_dots, boxes, pos, gt_map, im_name) in \
             enumerate(metric_logger.log_every(data_loader_test, print_freq, header)):
@@ -407,7 +410,7 @@ def main(args):
 
         avg_cnt = pred_cnt + cv_cnt
         avg_cnt /= 2
-        auto_cnt = cv_cnt if cv_confidence > 1.2 else pred_cnt
+        auto_cnt = cv_cnt if cv_confidence > 7.0 else pred_cnt
 
         # 1.5: 17.07/114.49 optimal 0.66
 
