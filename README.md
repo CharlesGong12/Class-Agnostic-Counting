@@ -1,11 +1,13 @@
 ## CounTR
 
-This is our final project for digital image processing. Thanks to @singularity-s0 and @Dash Kev.
+#### This is our final project for digital image processing. 
 
-Our model is based on CounTR. The main changes are that we found exemplar interfered with the results in some cases, so we deleted it and turned it into a zero-shot problem. We also used OpenCV contour-based counting instead of summing the density map. Our results are as follows:
+Thanks to @singularity-s0 and @Dash Kev.
+
+Our model is based on CounTR. The main changes are that we found exemplar interfered with the results in some cases, so we deleted it and turned it into a zero-shot problem. We also used OpenCV contour-based counting instead of summing the density map. Our zero-shot results on the validation set MAE/MSE were **15.90/58.46** respectively, and **13.86/91.51** on the test set. We used contour-based counting on the test set with results of **13.81/91.49**, slightly better than the original CounTR.
 
 
-Our branches are:
+#### Our branches are:
 
 FSC: Baseline provided by the teaching assistant
 
