@@ -1,11 +1,24 @@
 ## CounTR
 
-Official PyTorch implementation for CounTR. Details can be found in the paper.
+This is our final project for digital image processing. Thanks to @singularity-s0 and @Dash Kev.
+Our model is based on CounTR. The main changes are that we found exemplar interfered with the results in some cases, so we deleted it and turned it into a zero-shot problem. We also used OpenCV contour-based counting instead of summing the density map. Our results are as follows:
+**************  
+Our branches are:
+FSC: Baseline provided by the teaching assistant
+CounTR and CounTR-BackUpVersion: Original CounTR model, modified environment configuration
+Vit-encoder: Baseline uses Vit as encoder
+counting-convnet: Use convolutional network to regress count from density map
+countr-clip: Use clip as text encoder for multimodal
+countr-clp-full: Also change the image encoder to clip
+countr-finetune-zs: Fine-tune zero-shot
+countr-textonly-regression: Based on countr-textonly, use convolutional network to regress
+countr-zeroshot: Zero-shot + contour-based counting
+exemplar-resnet: Replace countr's exemplar encoder with pretrained ResNet18
+resnet: Use residual connection between encoder and decoder.
+
+Details can be found in the paper.
+
 [[Paper]](https://arxiv.org/abs/2208.13721) [[Project page]](https://verg-avesta.github.io/CounTR_Webpage/)
-
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/countr-transformer-based-generalised-visual/object-counting-on-fsc147)](https://paperswithcode.com/sota/object-counting-on-fsc147?p=countr-transformer-based-generalised-visual)
-
-[![PWC](https://img.shields.io/endpoint.svg?url=https://paperswithcode.com/badge/countr-transformer-based-generalised-visual/object-counting-on-carpk)](https://paperswithcode.com/sota/object-counting-on-carpk?p=countr-transformer-based-generalised-visual)
 
 <img src=img/arch.png width="80%"/>
 
