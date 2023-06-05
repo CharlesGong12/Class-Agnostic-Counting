@@ -15,7 +15,7 @@ CounTR and CounTR-BackUpVersion: Original CounTR model, modified environment con
 
 Vit-encoder: Baseline uses Vit as encoder
 
-counting-convnet: Use convolutional network to regress count from density map
+**counting-convnet: Zero-shot + hybrid counting**
 
 countr-clip: Use clip as text encoder for multimodal
 
@@ -25,7 +25,7 @@ countr-finetune-zs: Fine-tune zero-shot
 
 countr-textonly-regression: Based on countr-textonly, use convolutional network to regress
 
-countr-zeroshot: Zero-shot + contour-based counting
+countr-zeroshot: Zero-shot
 
 exemplar-resnet: Replace countr's exemplar encoder with pretrained ResNet18
 
