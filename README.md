@@ -1,35 +1,35 @@
 ## CounTR
 
-#### This is our final project for digital image processing. 
+#### :boom: :boom: This is our final project for Digital Image Processing, FDU, which achieved an **A grade**!
 
 Thanks to @singularity-s0 and @Dash Kev.
 
-Our model is based on CounTR. The main changes are that we found exemplar interfered with the results in some cases, so we deleted it and turned it into a zero-shot problem. We also used OpenCV contour-based counting instead of summing the density map. Our zero-shot results on the validation set MAE/MSE were **15.90/58.46** respectively, and **13.86/91.51** on the test set. We used contour-based counting on the test set with results of **13.81/91.49**, slightly better than the original CounTR.
+### Project Overview
+Our model is based on CounTR. The main changes we implemented are as follows:
+1. **Contour-based Counting**: We used OpenCV contour-based counting to assist in density map counting.
+2. **Removed Exemplar**: We found that the exemplar interfered with the results in some cases, so we deleted it and turned it into a zero-shot problem.
 
+### Results
+- **Validation Set**: 
+  - Zero-shot MAE/MSE: **15.90/58.46**
+- **Test Set**:
+  - Zero-shot MAE/MSE: **13.86/91.51**
+  - Contour-based Counting MAE/MSE: **13.81/91.49** (Slightly better than the original CounTR)
 
-#### Our branches are:
+### Branches
+Our repository includes the following branches, each addressing different aspects and improvements of the CounTR model:
 
-FSC: Baseline provided by the teaching assistant
-
-CounTR and CounTR-BackUpVersion: Original CounTR model, modified environment configuration
-
-Vit-encoder: Baseline uses Vit as encoder
-
-**counting-convnet: Zero-shot + hybrid counting**
-
-countr-clip: Use clip as text encoder for multimodal
-
-countr-clp-full: Also change the image encoder to clip
-
-countr-finetune-zs: Fine-tune zero-shot
-
-countr-textonly-regression: Based on countr-textonly, use convolutional network to regress
-
-countr-zeroshot: Zero-shot
-
-exemplar-resnet: Replace countr's exemplar encoder with pretrained ResNet18
-
-resnet: Use residual connection between encoder and decoder.
+- FSC: Baseline provided by the teaching assistant
+- CounTR and CounTR-BackUpVersion: Original CounTR model with modified environment configuration
+- Vit-encoder: Baseline using Vit as encoder
+- **counting-convnet**: Zero-shot + hybrid counting (**Key improvement branch**)
+- countr-clip: Uses CLIP as text encoder for multimodal
+- countr-clip-full: Changes both the image and text encoder to CLIP
+- **countr-finetune-zs**: Fine-tunes the zero-shot model
+- countr-textonly-regression: Based on countr-textonly, uses convolutional network to regress
+- **countr-zeroshot**: Zero-shot model (**Key improvement branch**)
+- exemplar-resnet: Replaces CounTR's exemplar encoder with pretrained ResNet18
+- resnet: Uses residual connections between encoder and decoder
 
 
 ### Here is the original author's Readme：
