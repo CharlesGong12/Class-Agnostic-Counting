@@ -6,7 +6,7 @@ Thanks to @singularity-s0 and @Dash Kev.
 
 ### Project Overview
 Our model is based on CounTR. The main changes we implemented are as follows:
-1. **Contour-based Counting**: We used OpenCV contour-based counting to assist in density map counting.
+1. **Contour-based Counting**: We discovered that sometimes the contours in the density map are clearly visible to the naked eye, but the sum of each object does not reach a count of one. Therefore, we used OpenCV contour-based counting to assist in counting when the contours in the density map are relatively clear.
 2. **Removed Exemplar**: We found that the exemplar interfered with the results in some cases, so we deleted it and turned it into a zero-shot problem.
 
 ### Results
